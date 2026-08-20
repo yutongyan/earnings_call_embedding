@@ -278,8 +278,73 @@ def compute_sue_txt(model, X_test):
     return np.log(probs[:, iH]) - np.log(probs[:, iL])
 
 
+def process_one_quarter(args):
+    """Process a single quarter's regression. Designed for parallel execution."""
+    test_q, train_qs, meta, event_year_index = args
+
+    train_meta = meta[meta["yq"].isin(train_qs)]
+    test_meta = meta[meta["yq"] == test_q]
+    if len(test_meta) == 0:
+        return []
+
+    y_train, _ = categorize_returns(train_meta["abnormal_return"])
+
+    train_eids = train_meta["event_id"].tolist()
+    test_eids = test_meta["event_id"].tolist()
+
+    X_train, X_test = build_rolling_features(train_eids, test_eids, event_year_index)
+
+    try:
+        base_model = SGDClassifier(
+            loss="log_loss", penalty="elasticnet", l1_ratio=0.5,
+            max_iter=500, random_state=42, tol=1e-3,
+        )
+        param_grid = {"alpha": [0.0001, 0.001, 0.01, 0.1]}
+        cv_search = GridSearchCV(base_model, param_grid, cv=5,
+                          scoring="neg_log_loss", n_jobs=4, refit=True)
+        cv_search.fit(X_train, y_train)
+        best_alpha = cv_search.best_params_["alpha"]
+
+        model = CalibratedClassifierCV(cv_search.best_estimator_, cv=5,
+                                       method="sigmoid", n_jobs=4)
+        model.fit(X_train, y_train)
+    except Exception as e:
+        print(f"  {test_q} ERROR: {e}", flush=True)
+        return []
+
+    classes = list(model.classes_)
+    if "H" not in classes or "L" not in classes:
+        print(f"  {test_q} WARNING: classes={classes}", flush=True)
+        return []
+
+    sue_txt_test = compute_sue_txt(model, X_test)
+    sue_txt_train = compute_sue_txt(model, X_train)
+    quintile_cutoffs = np.percentile(sue_txt_train, [20, 40, 60, 80])
+
+    quarter_results = []
+    for j, (idx, row) in enumerate(test_meta.iterrows()):
+        q_assign = np.searchsorted(quintile_cutoffs, sue_txt_test[j]) + 1
+        quarter_results.append({
+            "event_id": row["event_id"],
+            "permno": row["permno"],
+            "call_date": row["call_date"],
+            "yq": str(test_q),
+            "sue_txt": float(sue_txt_test[j]),
+            "sue_txt_quintile": int(q_assign),
+            "abnormal_return": row["abnormal_return"],
+            "best_alpha": best_alpha,
+        })
+
+    print(f"  {test_q}: alpha={best_alpha}, mean={np.mean(sue_txt_test):.3f} std={np.std(sue_txt_test):.3f}", flush=True)
+    del X_train, X_test, model
+    gc.collect()
+    return quarter_results
+
+
 def run_rolling_regression(meta, event_year_index):
-    print("\n=== Rolling-window regression (v3) ===", flush=True)
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    print("\n=== Rolling-window regression (v3, parallel) ===", flush=True)
 
     meta = meta.copy()
     meta["yq"] = meta["call_date"].dt.to_period("Q")
@@ -296,80 +361,30 @@ def run_rolling_regression(meta, event_year_index):
         done_quarters = set(existing["yq"].unique())
         print(f"Resuming: {len(done_quarters)} quarters done ({len(results):,} results)")
 
-    for i, test_q in enumerate(test_quarters):
+    todo = []
+    for test_q in test_quarters:
         if str(test_q) in done_quarters:
             continue
-
         train_qs = [q for q in all_quarters if q < test_q][-8:]
         if len(train_qs) < 8:
             continue
+        todo.append((test_q, train_qs, meta, event_year_index))
 
-        train_meta = meta[meta["yq"].isin(train_qs)]
-        test_meta = meta[meta["yq"] == test_q]
-        if len(test_meta) == 0:
-            continue
+    print(f"Quarters to process: {len(todo)}")
 
-        print(f"[{i+1}/{len(test_quarters)}] {test_q}: train={len(train_meta)}, test={len(test_meta)}", flush=True)
+    batch_size = 4
+    for batch_start in range(0, len(todo), batch_size):
+        batch = todo[batch_start:batch_start + batch_size]
+        print(f"\nBatch {batch_start//batch_size+1}: quarters {[str(t[0]) for t in batch]}", flush=True)
 
-        y_train, _ = categorize_returns(train_meta["abnormal_return"])
+        with ProcessPoolExecutor(max_workers=len(batch)) as executor:
+            futures = {executor.submit(process_one_quarter, args): args[0] for args in batch}
+            for future in as_completed(futures):
+                qr = future.result()
+                results.extend(qr)
 
-        train_eids = train_meta["event_id"].tolist()
-        test_eids = test_meta["event_id"].tolist()
-
-        X_train, X_test = build_rolling_features(train_eids, test_eids, event_year_index)
-
-        try:
-            base_model = SGDClassifier(
-                loss="log_loss", penalty="elasticnet", l1_ratio=0.5,
-                max_iter=500, random_state=42, tol=1e-3,
-            )
-            param_grid = {"alpha": [0.0001, 0.001, 0.01, 0.1]}
-            cv = GridSearchCV(base_model, param_grid, cv=5,
-                              scoring="neg_log_loss", n_jobs=-1, refit=True)
-            cv.fit(X_train, y_train)
-            best_alpha = cv.best_params_["alpha"]
-
-            model = CalibratedClassifierCV(cv.best_estimator_, cv=5, method="sigmoid", n_jobs=-1)
-            model.fit(X_train, y_train)
-        except Exception as e:
-            print(f"  ERROR fitting: {e}", flush=True)
-            del X_train, X_test
-            gc.collect()
-            continue
-
-        classes = list(model.classes_)
-        if "H" not in classes or "L" not in classes:
-            print(f"  WARNING: classes={classes}, skipping", flush=True)
-            del X_train, X_test
-            gc.collect()
-            continue
-
-        sue_txt_test = compute_sue_txt(model, X_test)
-
-        sue_txt_train = compute_sue_txt(model, X_train)
-        quintile_cutoffs = np.percentile(sue_txt_train, [20, 40, 60, 80])
-
-        for j, (idx, row) in enumerate(test_meta.iterrows()):
-            q_assign = np.searchsorted(quintile_cutoffs, sue_txt_test[j]) + 1
-            results.append({
-                "event_id": row["event_id"],
-                "permno": row["permno"],
-                "call_date": row["call_date"],
-                "yq": str(test_q),
-                "sue_txt": float(sue_txt_test[j]),
-                "sue_txt_quintile": int(q_assign),
-                "abnormal_return": row["abnormal_return"],
-                "best_alpha": best_alpha,
-            })
-
-        print(f"  alpha={best_alpha}, SUE.txt mean={np.mean(sue_txt_test):.3f} std={np.std(sue_txt_test):.3f}", flush=True)
-
-        del X_train, X_test, model
-        gc.collect()
-
-        if (i + 1) % 5 == 0 or test_q == test_quarters[-1]:
-            pd.DataFrame(results).to_parquet(checkpoint_path, index=False)
-            print(f"  [checkpoint] {len(results):,} results saved", flush=True)
+        pd.DataFrame(results).to_parquet(checkpoint_path, index=False)
+        print(f"  [checkpoint] {len(results):,} results saved", flush=True)
 
     return pd.DataFrame(results)
 
