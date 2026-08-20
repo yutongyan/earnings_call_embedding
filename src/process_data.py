@@ -38,35 +38,41 @@ CRSP_SENTINELS = {-66.0, -77.0, -88.0, -99.0}
 # Step 1: Unzip year-level archives
 # ============================================================
 
+def _unzip_one_year(args):
+    """Unzip one year's archive. Designed for parallel execution."""
+    zf, output_dir = args
+    year = os.path.basename(zf).replace(".zip", "")
+    year_dir = os.path.join(output_dir, year)
+
+    xml_count = len(glob.glob(os.path.join(year_dir, "*_T.xml")))
+    if xml_count > 100:
+        return f"  {year}: already unzipped ({xml_count} XMLs)"
+
+    os.makedirs(year_dir, exist_ok=True)
+    with zipfile.ZipFile(zf, "r") as z:
+        z.extractall(year_dir)
+
+    nested = os.path.join(year_dir, year)
+    if os.path.isdir(nested):
+        import shutil
+        for f in os.listdir(nested):
+            shutil.move(os.path.join(nested, f), os.path.join(year_dir, f))
+        os.rmdir(nested)
+
+    xml_count = len(glob.glob(os.path.join(year_dir, "*_T.xml")))
+    return f"  {year}: {xml_count} XMLs"
+
+
 def unzip_years(raw_dir, output_dir):
-    """Unzip each year's zip file into output_dir/YYYY/."""
-    print("=== Step 1: Unzipping year archives ===", flush=True)
+    """Unzip all year archives in parallel."""
+    print("=== Step 1: Unzipping year archives (parallel) ===", flush=True)
     os.makedirs(output_dir, exist_ok=True)
     zips = sorted(glob.glob(os.path.join(raw_dir, "*.zip")))
-    for zf in zips:
-        year = os.path.basename(zf).replace(".zip", "")
-        year_dir = os.path.join(output_dir, year)
+    args = [(zf, output_dir) for zf in zips]
 
-        xml_count = len(glob.glob(os.path.join(year_dir, "*_T.xml")))
-        if xml_count > 100:
-            print(f"  {year}: already unzipped ({xml_count} XMLs)", flush=True)
-            continue
-
-        os.makedirs(year_dir, exist_ok=True)
-        print(f"  Unzipping {year}...", flush=True)
-        with zipfile.ZipFile(zf, "r") as z:
-            z.extractall(year_dir)
-
-        # Handle nested directory: zip may extract to year_dir/YYYY/*.xml
-        nested = os.path.join(year_dir, year)
-        if os.path.isdir(nested):
-            import shutil
-            for f in os.listdir(nested):
-                shutil.move(os.path.join(nested, f), os.path.join(year_dir, f))
-            os.rmdir(nested)
-
-        xml_count = len(glob.glob(os.path.join(year_dir, "*_T.xml")))
-        print(f"  {year}: {xml_count} XMLs", flush=True)
+    with ProcessPoolExecutor(max_workers=8) as ex:
+        for result in ex.map(_unzip_one_year, args):
+            print(result, flush=True)
 
 
 # ============================================================
