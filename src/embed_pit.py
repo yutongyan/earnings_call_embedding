@@ -60,21 +60,25 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    causal_model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_name, trust_remote_code=True,
         dtype=torch.bfloat16,
     )
-    causal_model = causal_model.to(device).eval()
+    model = model.to(device).eval()
 
-    backbone = None
-    for attr in ["transformer", "model", "gpt_neox", "backbone"]:
-        if hasattr(causal_model, attr):
-            backbone = getattr(causal_model, attr)
-            print(f"    Using backbone: {attr}", flush=True)
+    captured_hidden = {}
+    def hook_fn(module, input, output):
+        captured_hidden["last"] = output
+
+    hook = None
+    for name, module in model.named_modules():
+        if "ln_f" in name or "final_layernorm" in name or "norm" == name.split(".")[-1]:
+            hook = module.register_forward_hook(hook_fn)
+            print(f"    Hook on: {name}", flush=True)
             break
 
-    if backbone is None:
-        print("    WARNING: no backbone found, using full model with logits", flush=True)
+    if hook is None:
+        print("    WARNING: no layer norm found for hook, will use logits", flush=True)
 
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
@@ -85,16 +89,15 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
         ).to(device)
 
         with torch.no_grad():
-            if backbone is not None:
-                outputs = backbone(input_ids=encoded["input_ids"],
-                                   attention_mask=encoded["attention_mask"])
-                if hasattr(outputs, "last_hidden_state"):
-                    hidden = outputs.last_hidden_state
-                else:
-                    hidden = outputs[0]
+            captured_hidden.clear()
+            model(input_ids=encoded["input_ids"],
+                  attention_mask=encoded["attention_mask"])
+
+            if "last" in captured_hidden:
+                hidden = captured_hidden["last"]
             else:
-                outputs = causal_model(input_ids=encoded["input_ids"],
-                                       attention_mask=encoded["attention_mask"])
+                outputs = model(input_ids=encoded["input_ids"],
+                               attention_mask=encoded["attention_mask"])
                 hidden = outputs.logits
             embeddings = mean_pool(hidden, encoded["attention_mask"])
             all_embeddings.append(embeddings.float().cpu().numpy())
@@ -102,7 +105,9 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
         if (i // batch_size) % 50 == 0:
             print(f"    Batch {i//batch_size+1}/{(len(texts)-1)//batch_size+1}", flush=True)
 
-    del causal_model, backbone, tokenizer
+    if hook is not None:
+        hook.remove()
+    del model, tokenizer
     torch.cuda.empty_cache()
     gc.collect()
 
