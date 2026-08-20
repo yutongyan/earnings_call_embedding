@@ -155,7 +155,12 @@ Some firms have multiple earnings calls in the same quarter (e.g., preliminary r
 
 ## 9. Call Duration and Outlier Filtering
 
-The XML only contains `<startDate>` (no end time). Estimated call duration from transcript word count at ~150 words/min:
+The XML only contains `<startDate>` (no end time). We approximate call duration from transcript word count, assuming a speaking pace of ~150 words per minute (standard for conversational English in professional settings). This estimate includes pauses, speaker transitions, and Q&A wait times, which are not captured in the transcript text. The actual wall-clock duration may be 10-20% longer than the word-count estimate.
+
+```
+estimated_duration_minutes = total_words / 150
+estimated_end_time = startDate + estimated_duration_minutes
+```
 
 | Percentile | Words | Est. Duration |
 |-----------|-------|---------------|
