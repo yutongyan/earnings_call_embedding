@@ -1,10 +1,5 @@
 # Embedding Quality Report: PIT-1B Base Model
 
-**To:** Prof. [Supervisor]
-**From:** Yutong Yan
-**Date:** August 20, 2026
-**Re:** Hidden-state quality issue discovered during earnings call embedding pipeline development
-
 ## Summary
 
 While building a point-in-time embedding pipeline for earnings call transcripts, we tested two model families: **PIT** (Diamegs) and **DatedGPT**. Both provide annual checkpoints trained on data up to a specific year, enabling look-ahead-free embeddings.
@@ -64,12 +59,6 @@ We have not done a layer-by-layer analysis to pinpoint the exact cause, and this
 | **Intermediate-layer embeddings** (e.g., layer 26 instead of 51) | Easy to test | Outliers may be less severe in earlier layers |
 | **Architectural fix** (e.g., layer norm after last block, hidden-state regularization during training) | Requires retraining | Would resolve the root cause |
 | **Use DatedGPT instead** | Immediate | Avoids the issue entirely |
-
-## Current Decision
-
-For our earnings call embedding pipeline, we are proceeding with **DatedGPT-base** as the default model. It provides clean embeddings, standard HuggingFace compatibility, and the same annual point-in-time checkpoints (2013-2024).
-
-We remain open to switching to PIT if the outlier issue is addressed (e.g., through a future model release or a validated normalization procedure).
 
 ## Appendix: Raw Embedding Statistics
 
