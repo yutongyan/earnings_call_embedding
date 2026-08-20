@@ -58,7 +58,7 @@ def compute_sue_txt(model, X):
 def main():
     print("=== PEAD with DatedGPT Embeddings ===\n", flush=True)
 
-    meta = pd.read_parquet("data/merged_metadata.parquet")
+    meta = pd.read_parquet("data/merged_metadata_v3.parquet")
     meta["call_date"] = pd.to_datetime(meta["call_date"])
     meta["yq"] = meta["call_date"].dt.to_period("Q")
     print(f"Metadata: {len(meta):,} events")
