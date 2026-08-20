@@ -56,9 +56,10 @@ def load_texts_for_events(event_ids, event_year_index, col="presentation_text"):
         year_eids = set(relevant[relevant["year"] == year]["event_id"])
         df = pd.read_parquet(f"data/transcripts_{year}.parquet",
                              columns=["event_id", col])
-        for _, row in df[df["event_id"].isin(year_eids)].iterrows():
-            texts[row["event_id"]] = row[col] or ""
-        del df
+        matched = df[df["event_id"].isin(year_eids)].set_index("event_id")[col]
+        matched = matched.fillna("")
+        texts.update(matched.to_dict())
+        del df, matched
     gc.collect()
     return texts
 
@@ -220,19 +221,34 @@ def compute_benchmark_adjusted_cars(merged_ar, crsp_chunks):
     return car_df
 
 
+def load_both_texts(event_ids, event_year_index):
+    """Load presentation and Q&A text in one pass per year file."""
+    eid_set = set(event_ids)
+    relevant = event_year_index[event_year_index["event_id"].isin(eid_set)]
+    pres, qa = {}, {}
+    for year in relevant["year"].unique():
+        year_eids = set(relevant[relevant["year"] == year]["event_id"])
+        df = pd.read_parquet(f"data/transcripts_{year}.parquet",
+                             columns=["event_id", "presentation_text", "qa_text"])
+        matched = df[df["event_id"].isin(year_eids)].set_index("event_id")
+        pres.update(matched["presentation_text"].fillna("").to_dict())
+        qa.update(matched["qa_text"].fillna("").to_dict())
+        del df, matched
+    gc.collect()
+    return pres, qa
+
+
 def build_rolling_features(train_eids, test_eids, event_year_index):
     """Build 4-block features with rolling vocabulary from training set."""
-    train_pres = load_texts_for_events(train_eids, event_year_index, "presentation_text")
-    train_qa = load_texts_for_events(train_eids, event_year_index, "qa_text")
-    test_pres = load_texts_for_events(test_eids, event_year_index, "presentation_text")
-    test_qa = load_texts_for_events(test_eids, event_year_index, "qa_text")
+    all_eids = list(set(train_eids) | set(test_eids))
+    all_pres, all_qa = load_both_texts(all_eids, event_year_index)
 
-    tr_pres = [preprocess_text(train_pres.get(e, "")) for e in train_eids]
-    tr_qa = [preprocess_text(train_qa.get(e, "")) for e in train_eids]
-    te_pres = [preprocess_text(test_pres.get(e, "")) for e in test_eids]
-    te_qa = [preprocess_text(test_qa.get(e, "")) for e in test_eids]
+    tr_pres = [preprocess_text(all_pres.get(e, "")) for e in train_eids]
+    tr_qa = [preprocess_text(all_qa.get(e, "")) for e in train_eids]
+    te_pres = [preprocess_text(all_pres.get(e, "")) for e in test_eids]
+    te_qa = [preprocess_text(all_qa.get(e, "")) for e in test_eids]
 
-    del train_pres, train_qa, test_pres, test_qa
+    del all_pres, all_qa
     gc.collect()
 
     blocks_tr, blocks_te = [], []
