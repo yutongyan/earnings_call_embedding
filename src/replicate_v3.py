@@ -437,41 +437,14 @@ def main():
     meta_ar = meta_ar.merge(ar_df, on=["event_id", "permno", "call_date"], how="inner")
     print(f"Merged with AR: {len(meta_ar):,} events")
 
-    # FF6 portfolio assignment
-    print("\nAssigning firms to FF6 portfolios...", flush=True)
-    crsp_me = pd.read_parquet(
-        f"{WRDS_DIR}/crsp_dsf.parquet",
-        columns=["permno", "date", "prc", "shrout"],
-    )
-    crsp_me["date"] = pd.to_datetime(crsp_me["date"])
-    crsp_me = crsp_me[(crsp_me["date"] >= "2007-01-01") & (crsp_me["date"] <= "2020-12-31")]
-    crsp_me["prc"] = pd.to_numeric(crsp_me["prc"], errors="coerce").abs()
-    crsp_me["shrout"] = pd.to_numeric(crsp_me["shrout"], errors="coerce")
-    crsp_me["me"] = crsp_me["prc"] * crsp_me["shrout"] / 1000
-    crsp_me["month"] = crsp_me["date"].dt.month
-    crsp_me["year"] = crsp_me["date"].dt.year
-    june_me = crsp_me.groupby(["permno", "year", "month"]).last().reset_index()
-    june_me = june_me[june_me["month"] == 6][["permno", "year", "me"]].dropna()
-    del crsp_me
-    gc.collect()
-
-    compustat = pd.read_parquet(
-        f"{WRDS_DIR}/comp_fundq.parquet",
-        columns=["gvkey", "datadate", "fyearq", "fqtr", "ceqq",
-                  "indfmt", "datafmt", "popsrc", "consol"],
-    )
-    compustat = compustat[
-        (compustat["indfmt"] == "INDL") & (compustat["datafmt"] == "STD")
-        & (compustat["popsrc"] == "D") & (compustat["consol"] == "C")
-    ]
-    compustat["datadate"] = pd.to_datetime(compustat["datadate"])
-    ccm = pd.read_parquet(f"{WRDS_DIR}/crsp_ccmxpf_linktable.parquet")
-    msenames = pd.read_parquet(f"{WRDS_DIR}/crsp_msenames.parquet")
-
-    port_assignments = assign_ff6_portfolio(june_me, compustat, ccm, msenames)
-    print(f"  Assigned {len(port_assignments):,} firm-years to portfolios")
-    del june_me, compustat, ccm, msenames
-    gc.collect()
+    # FF6 portfolio assignment (pre-computed locally, uploaded as parquet)
+    print("\nLoading FF6 portfolio assignments...", flush=True)
+    ff6_adf = pd.read_parquet("data/ff6_assignments.parquet")
+    port_assignments = {
+        (int(r["permno"]), int(r["year"])): r["portfolio"]
+        for _, r in ff6_adf.iterrows()
+    }
+    print(f"  {len(port_assignments):,} firm-year assignments loaded")
 
     # FF6 benchmark CARs (summed, not compounded)
     ff6 = pd.read_parquet("data/ff6_portfolios_daily.parquet")
