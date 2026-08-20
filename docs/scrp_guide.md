@@ -228,7 +228,7 @@ watch -n 5 nvidia-smi
 | Location | Use | Quota (RPg) |
 |----------|-----|-------------|
 | `~/` | Code, configs | 50 GB |
-| `~/large-data` or `~/large` | Datasets, models | 500 GB |
+| `~/large-data` (-> /data/users/) | Datasets, models | 500 GB (BeeGFS distributed) |
 | `~/archive` | Backups | 1 TB |
 | Distributed storage | Large files | ~2 TB |
 
