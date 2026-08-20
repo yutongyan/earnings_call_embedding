@@ -289,7 +289,18 @@ def run_rolling_regression(meta, event_year_index):
     print(f"Test quarters: {len(test_quarters)}")
 
     results = []
+    done_quarters = set()
+    checkpoint_path = "data/sue_txt_v2_checkpoint.parquet"
+    if os.path.exists(checkpoint_path):
+        existing = pd.read_parquet(checkpoint_path)
+        results = existing.to_dict("records")
+        done_quarters = set(existing["yq"].unique())
+        print(f"Resuming: {len(done_quarters)} quarters done ({len(results):,} results)")
+
     for i, test_q in enumerate(test_quarters):
+        if str(test_q) in done_quarters:
+            continue
+
         train_qs = [q for q in all_quarters if q < test_q][-8:]
         if len(train_qs) < 8:
             continue
@@ -314,7 +325,7 @@ def run_rolling_regression(meta, event_year_index):
                 Cs=Cs, cv=5, penalty="elasticnet", solver="saga",
                 l1_ratios=[0.5], scoring="neg_log_loss",
                 max_iter=2000, random_state=42, tol=1e-3,
-                n_jobs=1,
+                n_jobs=-1,
             )
             model.fit(X_train, y_train)
         except Exception as e:
