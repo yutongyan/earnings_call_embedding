@@ -4,7 +4,9 @@ This document describes how to properly process StreetEvents earnings call trans
 
 ## 1. Data Source
 
-StreetEvents transcripts from Refinitiv, accessed via SFTP. Each transcript is an XML file named `{event_id}_T.xml`, organized by year in the archive.
+StreetEvents transcripts from Refinitiv, accessed via SFTP or Dropbox archive. Each transcript is an XML file named `{event_id}_T.xml`. The raw archive is distributed as year-level zip files (2001.zip through 2026.zip), which are unzipped into `xml/YYYY/` directories for processing.
+
+**WRDS access**: Database queries use credentials stored in `~/.pgpass` (PostgreSQL password file). Once configured, connections are automatic with no Duo push required. Initial setup: copy `.pgpass` to the compute server and `chmod 600`.
 
 ## 2. Key XML Fields
 
