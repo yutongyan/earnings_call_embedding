@@ -224,11 +224,11 @@ def parse_year(archive_dir, year):
             seen[eid] = r
         else:
             existing = seen[eid]
-            r_final = r["story_version"] == "Final"
-            e_final = existing["story_version"] == "Final"
-            if r_final and not e_final:
+            r_prelim = r["story_version"] != "Final"
+            e_prelim = existing["story_version"] != "Final"
+            if r_prelim and not e_prelim:
                 seen[eid] = r
-            elif r_final == e_final and r["n_words_pres"] > existing["n_words_pres"]:
+            elif r_prelim == e_prelim and r["n_words_pres"] > existing["n_words_pres"]:
                 seen[eid] = r
 
     return list(seen.values())
