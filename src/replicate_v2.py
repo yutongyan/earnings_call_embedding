@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.linear_model import LogisticRegressionCV
-from sklearn.model_selection import StratifiedKFold
+from sklearn.linear_model import SGDClassifier
+from sklearn.calibration import CalibratedClassifierCV
 
 warnings.filterwarnings("ignore")
 
@@ -335,14 +335,16 @@ def run_rolling_regression(meta, event_year_index):
 
         X_train, X_test = build_rolling_features(train_eids, test_eids, event_year_index)
 
-        Cs = np.logspace(-3, 1, 10)
+        from sklearn.linear_model import SGDClassifier
+        from sklearn.calibration import CalibratedClassifierCV
+
         try:
-            model = LogisticRegressionCV(
-                Cs=Cs, cv=5, penalty="elasticnet", solver="saga",
-                l1_ratios=[0.5], scoring="neg_log_loss",
-                max_iter=2000, random_state=42, tol=1e-3,
+            base = SGDClassifier(
+                loss="log_loss", penalty="elasticnet", l1_ratio=0.5,
+                alpha=0.001, max_iter=500, random_state=42, tol=1e-3,
                 n_jobs=-1,
             )
+            model = CalibratedClassifierCV(base, cv=3, method="sigmoid", n_jobs=-1)
             model.fit(X_train, y_train)
         except Exception as e:
             print(f"  ERROR fitting: {e}")
@@ -364,8 +366,6 @@ def run_rolling_regression(meta, event_year_index):
         log_odds_L = np.log(probs[:, iL] / (1 - probs[:, iL]))
         sue_txt = log_odds_H - log_odds_L
 
-        best_C = model.C_[0] if hasattr(model, "C_") else 0
-
         for j, (idx, row) in enumerate(test_meta.iterrows()):
             results.append({
                 "event_id": row["event_id"],
@@ -374,10 +374,9 @@ def run_rolling_regression(meta, event_year_index):
                 "yq": str(test_q),
                 "sue_txt": float(sue_txt[j]),
                 "abnormal_return": row["abnormal_return"],
-                "best_C": float(best_C),
             })
 
-        print(f"  C={best_C:.4f}, SUE.txt mean={np.mean(sue_txt):.3f} std={np.std(sue_txt):.3f}")
+        print(f"  SUE.txt mean={np.mean(sue_txt):.3f} std={np.std(sue_txt):.3f}", flush=True)
 
         del X_train, X_test, model, probs
         gc.collect()
