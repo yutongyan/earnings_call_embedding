@@ -44,12 +44,17 @@ def parse_single_xml(filepath):
             headline = headline_el.text.strip()
 
         body_el = story.find("Body")
-        if body_el is None or not body_el.text:
+        if body_el is None:
             return None
-        body = body_el.text
+        body = "".join(body_el.itertext())
+        if not body.strip():
+            return None
 
         last_update = event.get("lastUpdate", "")
-        story_date_str = story.get("expirationDate", "")
+        story_type = story.get("storyType", "")
+        story_action = story.get("action", "")
+        story_version = story.get("version", "")
+        expiration_date = story.get("expirationDate", "")
 
         call_date = None
         date_match = re.search(
@@ -71,11 +76,11 @@ def parse_single_xml(filepath):
                 except Exception:
                     pass
 
-        if call_date is None and last_update:
+        if call_date is None and expiration_date:
             try:
                 clean = re.sub(
                     r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*",
-                    "", last_update
+                    "", expiration_date,
                 )
                 call_date = pd.to_datetime(clean, format="mixed")
             except Exception:
@@ -94,6 +99,30 @@ def parse_single_xml(filepath):
         if not sections["presentation"] and not sections["qa"]:
             return None
 
+        call_hour_gmt = None
+        time_match = re.search(
+            r"(\d{1,2}:\d{2}(?::\d{2})?)\s*(am|pm)\s*(GMT|EST|ET)",
+            headline, re.IGNORECASE,
+        )
+        if time_match:
+            try:
+                t = pd.to_datetime(time_match.group(1) + " " + time_match.group(2),
+                                   format="mixed")
+                hour = t.hour
+                tz = time_match.group(3).upper()
+                if tz == "GMT":
+                    hour_et = hour - 5
+                else:
+                    hour_et = hour
+                call_hour_gmt = hour
+            except Exception:
+                hour_et = None
+        else:
+            hour_et = None
+
+        is_before_close = hour_et is not None and hour_et < 16
+        is_preliminary = "preliminary" in headline.lower() or story_version != "Final"
+
         return {
             "event_id": event_id,
             "call_date": call_date,
@@ -104,6 +133,9 @@ def parse_single_xml(filepath):
             "qa_text": sections["qa"],
             "n_words_pres": len(sections["presentation"].split()),
             "n_words_qa": len(sections["qa"].split()),
+            "is_preliminary": is_preliminary,
+            "is_before_close": is_before_close,
+            "story_version": story_version,
             "filepath": filepath,
         }
     except Exception:
@@ -183,7 +215,19 @@ def parse_year(archive_dir, year):
             if result is not None:
                 results.append(result)
 
-    return results
+    seen = {}
+    for r in results:
+        eid = r["event_id"]
+        if eid not in seen:
+            seen[eid] = r
+        else:
+            existing = seen[eid]
+            if r["story_version"] == "Final" and existing["story_version"] != "Final":
+                seen[eid] = r
+            elif r["n_words_pres"] > existing["n_words_pres"]:
+                seen[eid] = r
+
+    return list(seen.values())
 
 
 def main():
