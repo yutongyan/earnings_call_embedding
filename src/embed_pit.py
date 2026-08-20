@@ -68,17 +68,26 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
 
     captured_hidden = {}
     def hook_fn(module, input, output):
-        captured_hidden["last"] = output
+        if isinstance(output, tuple):
+            captured_hidden["last"] = output[0]
+        else:
+            captured_hidden["last"] = output
 
     hook = None
+    last_block = None
     for name, module in model.named_modules():
-        if "ln_f" in name or "final_layernorm" in name or "norm" == name.split(".")[-1]:
-            hook = module.register_forward_hook(hook_fn)
-            print(f"    Hook on: {name}", flush=True)
+        if "ln_f" in name or "final_layernorm" in name:
+            last_block = (name, module)
             break
-
-    if hook is None:
-        print("    WARNING: no layer norm found for hook, will use logits", flush=True)
+    if last_block is None:
+        blocks = [(n, m) for n, m in model.named_modules() if re.match(r"transformer\.h\.\d+$", n)]
+        if blocks:
+            last_block = blocks[-1]
+    if last_block is not None:
+        hook = last_block[1].register_forward_hook(hook_fn)
+        print(f"    Hook on: {last_block[0]}", flush=True)
+    else:
+        print("    WARNING: no suitable layer found for hook, will use logits", flush=True)
 
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
