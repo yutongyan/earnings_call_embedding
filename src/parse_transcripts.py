@@ -106,6 +106,17 @@ def parse_single_xml(filepath):
         ticker_el = event.find("companyTicker")
         ticker = ticker_el.text.strip() if ticker_el is not None and ticker_el.text else ""
 
+        company_id_el = event.find("companyId")
+        company_id = company_id_el.text.strip() if company_id_el is not None and company_id_el.text else ""
+
+        cusip_el = event.find("CUSIP")
+        cusip = cusip_el.text.strip() if cusip_el is not None and cusip_el.text else ""
+
+        isin_el = event.find("ISIN")
+        isin = isin_el.text.strip() if isin_el is not None and isin_el.text else ""
+
+        last_update = event.get("lastUpdate", "")
+
         if not ticker:
             ticker_match = re.search(r"of\s+(\S+)\s+earnings", headline, re.IGNORECASE)
             ticker = ticker_match.group(1) if ticker_match else ""
@@ -119,15 +130,19 @@ def parse_single_xml(filepath):
         if not sections["presentation"] and not sections["qa"]:
             return None
 
-        is_before_close = None if call_hour_et is None else (call_hour_et < 16)
+        is_before_close = None if call_hour_et is None else (call_hour_et < 14)
         is_preliminary = "preliminary" in headline.lower() or story_version != "Final"
 
         return {
             "event_id": event_id,
+            "company_id": company_id,
             "call_date": call_date,
             "start_date_str": start_date_str,
+            "last_update": last_update,
             "headline": headline,
             "ticker": ticker,
+            "cusip": cusip,
+            "isin": isin,
             "company_name": company_name,
             "presentation_text": sections["presentation"],
             "qa_text": sections["qa"],
@@ -215,23 +230,25 @@ def parse_year(archive_dir, year):
             if result is not None:
                 results.append(result)
 
-    seen = {}
+    grouped = {}
     for r in results:
-        eid = r["event_id"]
-        if not eid:
+        if not r["event_id"] or not r["company_id"]:
             continue
-        if eid not in seen:
-            seen[eid] = r
+        key = (r["company_id"], r["start_date_str"])
+        if key not in grouped:
+            grouped[key] = r
         else:
-            existing = seen[eid]
-            r_prelim = r["story_version"] != "Final"
-            e_prelim = existing["story_version"] != "Final"
-            if r_prelim and not e_prelim:
-                seen[eid] = r
-            elif r_prelim == e_prelim and r["n_words_pres"] > existing["n_words_pres"]:
-                seen[eid] = r
+            existing = grouped[key]
+            r_lu = r["last_update"] or ""
+            e_lu = existing["last_update"] or ""
+            if r_lu and e_lu and r_lu < e_lu:
+                grouped[key] = r
+            elif r_lu == e_lu and r["event_id"] < existing["event_id"]:
+                grouped[key] = r
+            elif not e_lu and r_lu:
+                grouped[key] = r
 
-    return list(seen.values())
+    return list(grouped.values())
 
 
 def main():
