@@ -18,7 +18,7 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 PIT_MODELS = [
@@ -54,10 +54,16 @@ def mean_pool(hidden_states, attention_mask):
     return sum_embeddings / sum_mask
 
 
-def embed_texts(texts, model_name, batch_size=8, max_length=512, device="cuda"):
-    """Embed a list of texts using a HuggingFace model."""
+def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
+    """Embed texts using a causal LM. Uses last hidden state with mean pooling."""
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, trust_remote_code=True,
+        torch_dtype=torch.bfloat16, output_hidden_states=True,
+    )
     model = model.to(device).eval()
 
     all_embeddings = []
@@ -70,8 +76,9 @@ def embed_texts(texts, model_name, batch_size=8, max_length=512, device="cuda"):
 
         with torch.no_grad():
             outputs = model(**encoded)
-            embeddings = mean_pool(outputs.last_hidden_state, encoded["attention_mask"])
-            all_embeddings.append(embeddings.cpu().numpy())
+            hidden = outputs.hidden_states[-1]
+            embeddings = mean_pool(hidden, encoded["attention_mask"])
+            all_embeddings.append(embeddings.float().cpu().numpy())
 
         if (i // batch_size) % 50 == 0:
             print(f"    Batch {i//batch_size+1}/{(len(texts)-1)//batch_size+1}", flush=True)
