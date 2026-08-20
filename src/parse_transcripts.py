@@ -17,8 +17,12 @@ import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+
+TZ_UTC = ZoneInfo("UTC")
+TZ_NYC = ZoneInfo("America/New_York")
 
 
 def parse_single_xml(filepath):
@@ -46,86 +50,82 @@ def parse_single_xml(filepath):
         body_el = story.find("Body")
         if body_el is None:
             return None
-        body = "".join(body_el.itertext())
+        body = " ".join(body_el.itertext())
         if not body.strip():
             return None
 
-        last_update = event.get("lastUpdate", "")
-        story_type = story.get("storyType", "")
-        story_action = story.get("action", "")
         story_version = story.get("version", "")
-        expiration_date = story.get("expirationDate", "")
+
+        start_date_el = event.find("startDate")
+        start_date_str = start_date_el.text.strip() if start_date_el is not None and start_date_el.text else ""
 
         call_date = None
-        date_match = re.search(
-            r"(\d{1,2}-\w{3}-\d{2,4})\s+\d{1,2}:\d{2}", headline
-        )
-        if date_match:
+        call_hour_et = None
+        if start_date_str:
             try:
-                call_date = pd.to_datetime(date_match.group(1))
+                clean_str = re.sub(r"\s*(GMT|EST|EDT|ET)\s*$", "", start_date_str).strip()
+                call_dt = pd.to_datetime(clean_str, format="mixed")
+
+                if "EST" in start_date_str:
+                    from datetime import timezone, timedelta
+                    call_dt_nyc = call_dt.replace(tzinfo=timezone(timedelta(hours=-5)))
+                elif "EDT" in start_date_str:
+                    from datetime import timezone, timedelta
+                    call_dt_nyc = call_dt.replace(tzinfo=timezone(timedelta(hours=-4)))
+                else:
+                    call_dt_utc = call_dt.replace(tzinfo=TZ_UTC)
+                    call_dt_nyc = call_dt_utc.astimezone(TZ_NYC)
+
+                call_date = call_dt_nyc.replace(tzinfo=None)
+                call_date = pd.Timestamp(call_date).normalize()
+                call_hour_et = call_dt_nyc.hour
             except Exception:
                 pass
 
         if call_date is None:
-            date_match2 = re.search(
-                r"(\w+ \d{1,2},?\s+\d{4})", headline
+            date_match = re.search(
+                r"(\d{1,2}-\w{3}-\d{2,4})\s+\d{1,2}:\d{2}", headline
             )
+            if date_match:
+                try:
+                    call_date = pd.to_datetime(date_match.group(1))
+                except Exception:
+                    pass
+
+        if call_date is None:
+            date_match2 = re.search(r"(\w+ \d{1,2},?\s+\d{4})", headline)
             if date_match2:
                 try:
                     call_date = pd.to_datetime(date_match2.group(1))
                 except Exception:
                     pass
 
-        if call_date is None and expiration_date:
-            try:
-                clean = re.sub(
-                    r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*",
-                    "", expiration_date,
-                )
-                call_date = pd.to_datetime(clean, format="mixed")
-            except Exception:
-                pass
+        company_el = event.find("companyName")
+        company_name = company_el.text.strip() if company_el is not None and company_el.text else ""
 
-        ticker_match = re.search(r"of\s+(\S+)\s+earnings", headline, re.IGNORECASE)
-        ticker = ticker_match.group(1) if ticker_match else ""
+        ticker_el = event.find("companyTicker")
+        ticker = ticker_el.text.strip() if ticker_el is not None and ticker_el.text else ""
 
-        company_match = re.search(
-            r"Transcript of\s+(.+?)\s+earnings", headline, re.IGNORECASE
-        )
-        company_name = company_match.group(1) if company_match else ""
+        if not ticker:
+            ticker_match = re.search(r"of\s+(\S+)\s+earnings", headline, re.IGNORECASE)
+            ticker = ticker_match.group(1) if ticker_match else ""
+
+        if not company_name:
+            company_match = re.search(r"Transcript of\s+(.+?)\s+earnings", headline, re.IGNORECASE)
+            company_name = company_match.group(1) if company_match else ""
 
         sections = split_presentation_qa(body)
 
         if not sections["presentation"] and not sections["qa"]:
             return None
 
-        call_hour_gmt = None
-        time_match = re.search(
-            r"(\d{1,2}:\d{2}(?::\d{2})?)\s*(am|pm)\s*(GMT|EST|ET)",
-            headline, re.IGNORECASE,
-        )
-        if time_match:
-            try:
-                t = pd.to_datetime(time_match.group(1) + " " + time_match.group(2),
-                                   format="mixed")
-                hour = t.hour
-                tz = time_match.group(3).upper()
-                if tz == "GMT":
-                    hour_et = hour - 5
-                else:
-                    hour_et = hour
-                call_hour_gmt = hour
-            except Exception:
-                hour_et = None
-        else:
-            hour_et = None
-
-        is_before_close = hour_et is not None and hour_et < 16
+        is_before_close = None if call_hour_et is None else (call_hour_et < 16)
         is_preliminary = "preliminary" in headline.lower() or story_version != "Final"
 
         return {
             "event_id": event_id,
             "call_date": call_date,
+            "start_date_str": start_date_str,
             "headline": headline,
             "ticker": ticker,
             "company_name": company_name,
@@ -218,13 +218,17 @@ def parse_year(archive_dir, year):
     seen = {}
     for r in results:
         eid = r["event_id"]
+        if not eid:
+            continue
         if eid not in seen:
             seen[eid] = r
         else:
             existing = seen[eid]
-            if r["story_version"] == "Final" and existing["story_version"] != "Final":
+            r_final = r["story_version"] == "Final"
+            e_final = existing["story_version"] == "Final"
+            if r_final and not e_final:
                 seen[eid] = r
-            elif r["n_words_pres"] > existing["n_words_pres"]:
+            elif r_final == e_final and r["n_words_pres"] > existing["n_words_pres"]:
                 seen[eid] = r
 
     return list(seen.values())
