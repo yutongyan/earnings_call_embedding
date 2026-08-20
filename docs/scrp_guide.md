@@ -224,12 +224,30 @@ watch -n 5 nvidia-smi
 - Default duration: **6 hours** — always set `-t`
 
 ### Storage
-- Home directory: limited quota
-- For large datasets (our 42 GB transcript archive), check if `/scratch` or project storage is available:
-  ```bash
-  df -h ~
-  quota -s
-  ```
+
+| Location | Use | Quota (RPg) |
+|----------|-----|-------------|
+| `~/` | Code, configs | 50 GB |
+| `~/large-data` or `~/large` | Datasets, models | 500 GB |
+| `~/archive` | Backups | 1 TB |
+| Distributed storage | Large files | ~2 TB |
+
+Check usage: `scrp-quota`
+
+### WRDS Access
+
+WRDS database queries work via PostgreSQL with credentials in `~/.pgpass`:
+
+```bash
+# Copy pgpass from your local machine
+scp ~/.pgpass scrp-wenzhuoyue:~/.pgpass
+chmod 600 ~/.pgpass
+
+# Test
+python3 -c "import wrds; db = wrds.Connection(wrds_username='yutongyancuhk'); print('OK'); db.close()"
+```
+
+No Duo push needed for database queries once `.pgpass` is configured.
 
 ### Environment setup (first time)
 
@@ -246,26 +264,48 @@ conda activate llm
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers peft trl datasets accelerate bitsandbytes
 pip install deepspeed  # for multi-GPU
+
+# For data processing
+pip install wrds scikit-learn
 ```
 
 ### Data transfer
 
-Copy the transcript data from the download server to SCRP:
-
 ```bash
-# From the download server
-rsync -avz --progress /scratch/homo_silicus_ceo/data/streetevent_transcripts/ \
-    scrp-wenzhuoyue:/path/to/project/data/streetevent_transcripts/
+# Upload data via parallel scp (split + reassemble for speed)
+split -n 4 -d data.tar.gz data_part_
+for i in 00 01 02 03; do scp data_part_$i scrp-wenzhuoyue:~/large/ & done
+wait
+ssh scrp-wenzhuoyue "cat ~/large/data_part_* > ~/large/data.tar.gz && tar xzf ~/large/data.tar.gz"
+
+# Download from Dropbox directly on SCRP
+ssh scrp-wenzhuoyue "wget -O ~/large/file.zip 'DROPBOX_URL&dl=1'"
 ```
 
 ## Recommended Workflow
 
 1. **Develop locally** — write and debug code on your laptop/workstation
 2. **Push to GitHub** — `git push origin main`
-3. **Pull on SCRP** — `ssh scrp && cd project && git pull`
-4. **Submit batch job** — `sbatch train_7b.sh`
+3. **Pull on SCRP** — `ssh scrp-wenzhuoyue && cd ~/large/project && git pull`
+4. **Submit batch job** — `sbatch run_job.sh`
 5. **Monitor** — `scrp-queue` and check `logs/`
-6. **Pull results** — download checkpoints and eval results
+6. **Pull results** — download outputs
+
+### CPU-only jobs (data processing, regression)
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=process
+#SBATCH --partition=scrp
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --output=logs/%j.out
+#SBATCH --error=logs/%j.err
+
+source ~/miniconda3/bin/activate llm
+python3 -u src/process_data.py
+```
 
 ## Contact
 
