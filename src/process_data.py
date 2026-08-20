@@ -582,8 +582,8 @@ def main():
     parser.add_argument("--xml_dir", default=os.path.expanduser("~/large/streetevent_transcripts/xml"))
     parser.add_argument("--data_dir", default="data/")
     parser.add_argument("--wrds_user", default="yutongyancuhk")
-    parser.add_argument("--start_year", type=int, default=2008)
-    parser.add_argument("--end_year", type=int, default=2019)
+    parser.add_argument("--start_year", type=int, default=2001)
+    parser.add_argument("--end_year", type=int, default=2026)
     args = parser.parse_args()
 
     os.makedirs(args.data_dir, exist_ok=True)

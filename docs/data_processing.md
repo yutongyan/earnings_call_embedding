@@ -184,13 +184,16 @@ Starting from raw XML archive:
 
 | Step | Records | Notes |
 |------|---------|-------|
-| All XML files (2008-2019) | ~300K+ | All event types |
-| Filter to eventTypeId=1 | 224,476 | Earnings calls only |
-| Link to CRSP (US common stocks) | 110,986 | Ticker matching + date validation |
-| Dedup by (company_id, start_date) | ~110,700 | Earliest lastUpdate, then smallest event_id |
-| Merge with abnormal returns | 109,925 | Require valid AR computation |
-| Drop outlier-length calls (>99.5th pctile) | 109,375 | Max ~2 hours / 14,776 words |
-| Test sample (2010Q1-2019Q4) | ~91,000 | After 8-quarter training window |
+| All XML files (2001-2026) | ~700K+ | All event types, all years |
+| Filter to eventTypeId=1 | TBD | Earnings calls only |
+| Link to CRSP (US common stocks) | TBD | CUSIP-first, then ticker fallback |
+| Dedup by (company_id, start_date) | TBD | Earliest lastUpdate, then smallest event_id |
+| Drop outlier-length calls (>99.5th pctile) | TBD | Max ~2 hours / ~15K words |
+| Merge with abnormal returns | TBD | FF3+momentum with timing heuristic |
+| Compute FF6 CARs | TBD | Summed, not compounded |
+| Winsorize at 1%/99% | TBD | All continuous variables |
+
+The full archive covers 2001-2026. For the PEAD.txt replication, we use 2008-2019 (8-quarter training window starting 2008, test from 2010). For the embedding pipeline (DatedGPT), we use 2014-2019 (earliest model is 2013). The full archive is processed and stored for future extensions.
 
 ## 11. Winsorization
 
