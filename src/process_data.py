@@ -46,14 +46,27 @@ def unzip_years(raw_dir, output_dir):
     for zf in zips:
         year = os.path.basename(zf).replace(".zip", "")
         year_dir = os.path.join(output_dir, year)
-        if os.path.isdir(year_dir) and len(os.listdir(year_dir)) > 100:
-            print(f"  {year}: already unzipped ({len(os.listdir(year_dir))} files)", flush=True)
+
+        xml_count = len(glob.glob(os.path.join(year_dir, "*_T.xml")))
+        if xml_count > 100:
+            print(f"  {year}: already unzipped ({xml_count} XMLs)", flush=True)
             continue
+
         os.makedirs(year_dir, exist_ok=True)
         print(f"  Unzipping {year}...", flush=True)
         with zipfile.ZipFile(zf, "r") as z:
             z.extractall(year_dir)
-        print(f"  {year}: {len(os.listdir(year_dir))} files", flush=True)
+
+        # Handle nested directory: zip may extract to year_dir/YYYY/*.xml
+        nested = os.path.join(year_dir, year)
+        if os.path.isdir(nested):
+            import shutil
+            for f in os.listdir(nested):
+                shutil.move(os.path.join(nested, f), os.path.join(year_dir, f))
+            os.rmdir(nested)
+
+        xml_count = len(glob.glob(os.path.join(year_dir, "*_T.xml")))
+        print(f"  {year}: {xml_count} XMLs", flush=True)
 
 
 # ============================================================
