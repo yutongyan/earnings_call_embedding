@@ -89,19 +89,25 @@ Split on these markers using regex. If markers are missing, treat entire body as
 - Remove "Operator" standalone lines
 - Join remaining lines with spaces
 
-## 6. Ticker and Company Identification
+## 6. Company Identification and CRSP Linking
 
-Prefer XML elements over headline parsing:
-1. `<companyTicker>` for ticker (e.g., `RSI.TO`)
-2. `<companyName>` for company name
-3. Fall back to headline regex only if XML elements are missing
+Extract identifiers from XML elements (not headline parsing):
+- `<CUSIP>` (8-digit CUSIP, e.g., `77519R102`)
+- `<ISIN>` (12-character, e.g., `CA77519R1029`; extract 8-digit CUSIP as chars 3-10 for US/CA ISINs)
+- `<companyTicker>` (e.g., `RSI.TO`)
+- `<companyName>`
+- `<companyId>` (StreetEvents internal ID)
+
+**Linking to CRSP (two-step, CUSIP first):**
+
+1. **CUSIP match (primary):** Match `<CUSIP>` (first 8 digits) to CRSP `msenames.ncusip`. This is the most reliable link since CUSIPs are security-level identifiers that persist through ticker changes. Filter to `shrcd IN (10,11)` and `exchcd IN (1,2,3)` for US common stocks. Validate that `call_date` falls within `namedt` to `nameendt`.
+
+2. **Ticker match (fallback):** For events without a CUSIP match, clean the `<companyTicker>` by stripping the exchange suffix (`.OQ`, `.N`, `.A`, `.O`, `.K`, `.PK`, `.CB` are US exchanges) and match to CRSP `msenames.ticker`. Same date range validation.
 
 **US exchange suffixes** (Refinitiv convention):
 - `.OQ` = NASDAQ, `.N` = NYSE, `.A` = NYSE AMEX
 - `.O` = NASDAQ, `.K` = NYSE Arca, `.PK` = OTC
 - Non-US: `.TO` (Toronto), `.L` (London), `.T` (Tokyo), etc.
-
-**Linking to CRSP:** Match cleaned tickers to CRSP `msenames` by ticker, filtered to `shrcd IN (10,11)` and `exchcd IN (1,2,3)` for US common stocks. Validate that the call date falls within the CRSP name date range (`namedt` to `nameendt`).
 
 ## 7. Handling Duplicates
 
