@@ -33,9 +33,9 @@ def parse_single_xml(filepath):
 
         event = root
         event_id = event.get("Id", "")
-        event_type = event.get("eventTypeName", "")
+        event_type_id = event.get("eventTypeId", "")
 
-        if "earning" not in event_type.lower():
+        if event_type_id != "1":
             return None
 
         story = event.find("EventStory")
