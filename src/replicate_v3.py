@@ -21,7 +21,8 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import SGDClassifier
+from sklearn.calibration import CalibratedClassifierCV
 
 warnings.filterwarnings("ignore")
 
@@ -293,21 +294,13 @@ def process_one_quarter(args):
     X_train, X_test = build_rolling_features(train_eids, test_eids, event_year_index)
 
     try:
-        best_model = None
-        best_score = -np.inf
-        best_C = None
-        for C in [0.01, 0.1, 1.0, 10.0]:
-            m = LogisticRegression(
-                penalty="elasticnet", solver="saga", l1_ratio=0.5,
-                C=C, max_iter=1000, random_state=42, tol=1e-3,
-            )
-            m.fit(X_train, y_train)
-            score = m.score(X_train, y_train)
-            if score > best_score:
-                best_score = score
-                best_model = m
-                best_C = C
-        model = best_model
+        base = SGDClassifier(
+            loss="log_loss", penalty="elasticnet", l1_ratio=0.5,
+            alpha=0.001, max_iter=500, random_state=42, tol=1e-3,
+        )
+        model = CalibratedClassifierCV(base, cv=3, method="sigmoid", n_jobs=1)
+        model.fit(X_train, y_train)
+        best_C = 0.001
     except Exception as e:
         print(f"  {test_q} ERROR: {e}", flush=True)
         return []
