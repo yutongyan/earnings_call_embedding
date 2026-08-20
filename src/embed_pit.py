@@ -60,11 +60,10 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    causal_model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_name, trust_remote_code=True,
         dtype=torch.bfloat16,
     )
-    model = causal_model.transformer
     model = model.to(device).eval()
 
     all_embeddings = []
@@ -76,8 +75,14 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
         ).to(device)
 
         with torch.no_grad():
-            outputs = model(**encoded)
-            hidden = outputs.last_hidden_state if hasattr(outputs, 'last_hidden_state') else outputs[0]
+            outputs = model(input_ids=encoded["input_ids"],
+                           attention_mask=encoded["attention_mask"],
+                           output_hidden_states=True)
+            if hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
+                hidden = outputs.hidden_states[-1]
+            else:
+                logits = outputs.logits
+                hidden = logits
             embeddings = mean_pool(hidden, encoded["attention_mask"])
             all_embeddings.append(embeddings.float().cpu().numpy())
 
