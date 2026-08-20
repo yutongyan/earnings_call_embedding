@@ -22,27 +22,39 @@ Both are trained on chronologically-ordered snapshots of FineWeb, where each che
 
 Tested by extracting last hidden state with mean pooling over token positions.
 
-### DatedGPT-2014-base (2048 dims)
+Tested on the **same 200 earnings call transcripts** (2014 Q1 calls, max 512 tokens, mean-pooled over token positions). Apples-to-apples comparison.
+
+### DatedGPT-2013-base (2048 dims)
 
 ```
-Shape: (3, 12, 2048)
-Overall: mean=0.00, std=1.22, min=-26.0, max=29.6
-Per-dim abs max: max=22.4
-Dims with abs > 100: 0
+Shape: (200, 2048)
+Overall: mean=-0.008, std=0.80, min=-20.3, max=23.7
+Per-dim abs max: mean=1.02, max=23.7
+Dims > 100: 0, Dims > 50: 0, Dims > 10: 4
+L2 norms: mean=36.2, std=1.6
+Top outlier dims:
+  dim 2030: abs_max=23.74, mean=20.11, std=3.23
+  dim 1073: abs_max=20.31, mean=-18.11, std=2.73
+  dim 2006: abs_max=12.95, mean=-10.94, std=2.12
 ```
 
-Well-behaved: mean near zero, standard deviation ~1, no outlier dimensions. Embeddings are directly usable for downstream tasks without normalization.
+Well-behaved overall. Three mild outlier dims with means 10-20, but 20x smaller than PIT's outliers. 99.8% of dimensions have abs_max < 10. L2 norms are compact (mean=36) and consistent (std=1.6).
 
 ### PIT-1B-201312 base (1536 dims)
 
 ```
-Shape: (8889, 1536)
-Overall: mean=-0.07, std=13.74, min=-301.8, max=571.3
-Per-dim abs max: max=571.3
-Dims with abs > 100: many
+Shape: (200, 1536)
+Overall: mean=-0.079, std=14.62, min=-379.0, max=647.0
+Per-dim abs max: mean=18.08, max=647.0
+Dims > 100: 5, Dims > 50: 19, Dims > 10: 1,449 (94% of dims)
+L2 norms: mean=566.3, std=87.8
+Top outlier dims:
+  dim 1531: abs_max=647.0, mean=406.5, std=76.0
+  dim 1352: abs_max=379.0, mean=-217.4, std=44.7
+  dim 1081: abs_max=139.0, mean=21.9, std=17.8
 ```
 
-Severe outlier dimension problem. Dimension 1531 dominates every sample with values 300-570. This dimension is nearly constant across all documents (std ~40 relative to mean ~400), carrying no discriminative information.
+Severe outlier dimension problem. Two dimensions (1531, 1352) dominate every sample with means 400 and -217. These are nearly constant relative to their magnitude. 94% of all dimensions exceed abs_max of 10. L2 norms are 16x larger and 56x more variable than DatedGPT.
 
 ### PIT-1B-FT (fine-tuned) (1536 dims)
 
