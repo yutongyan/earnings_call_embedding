@@ -62,7 +62,7 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name, trust_remote_code=True,
-        torch_dtype=torch.bfloat16, output_hidden_states=True,
+        torch_dtype=torch.bfloat16,
     )
     model = model.to(device).eval()
 
@@ -75,7 +75,7 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
         ).to(device)
 
         with torch.no_grad():
-            outputs = model(**encoded)
+            outputs = model(**encoded, output_hidden_states=True)
             hidden = outputs.hidden_states[-1]
             embeddings = mean_pool(hidden, encoded["attention_mask"])
             all_embeddings.append(embeddings.float().cpu().numpy())
