@@ -21,9 +21,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.linear_model import SGDClassifier
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import GridSearchCV
+from sklearn.linear_model import LogisticRegression
 
 warnings.filterwarnings("ignore")
 
@@ -295,19 +293,21 @@ def process_one_quarter(args):
     X_train, X_test = build_rolling_features(train_eids, test_eids, event_year_index)
 
     try:
-        base_model = SGDClassifier(
-            loss="log_loss", penalty="elasticnet", l1_ratio=0.5,
-            max_iter=500, random_state=42, tol=1e-3,
-        )
-        param_grid = {"alpha": [0.0001, 0.001, 0.01, 0.1]}
-        cv_search = GridSearchCV(base_model, param_grid, cv=5,
-                          scoring="neg_log_loss", n_jobs=1, refit=True)
-        cv_search.fit(X_train, y_train)
-        best_alpha = cv_search.best_params_["alpha"]
-
-        model = CalibratedClassifierCV(cv_search.best_estimator_, cv=5,
-                                       method="sigmoid", n_jobs=1)
-        model.fit(X_train, y_train)
+        best_model = None
+        best_score = -np.inf
+        best_C = None
+        for C in [0.01, 0.1, 1.0, 10.0]:
+            m = LogisticRegression(
+                penalty="elasticnet", solver="saga", l1_ratio=0.5,
+                C=C, max_iter=1000, random_state=42, tol=1e-3,
+            )
+            m.fit(X_train, y_train)
+            score = m.score(X_train, y_train)
+            if score > best_score:
+                best_score = score
+                best_model = m
+                best_C = C
+        model = best_model
     except Exception as e:
         print(f"  {test_q} ERROR: {e}", flush=True)
         return []
@@ -332,10 +332,10 @@ def process_one_quarter(args):
             "sue_txt": float(sue_txt_test[j]),
             "sue_txt_quintile": int(q_assign),
             "abnormal_return": row["abnormal_return"],
-            "best_alpha": best_alpha,
+            "best_C": best_C,
         })
 
-    print(f"  {test_q}: alpha={best_alpha}, mean={np.mean(sue_txt_test):.3f} std={np.std(sue_txt_test):.3f}", flush=True)
+    print(f"  {test_q}: C={best_C}, mean={np.mean(sue_txt_test):.3f} std={np.std(sue_txt_test):.3f}", flush=True)
     del X_train, X_test, model
     gc.collect()
     return quarter_results
@@ -410,7 +410,7 @@ def clustered_ols(y, X, cluster1, cluster2):
     V2 = XtX_inv @ cluster_meat(cluster2) @ XtX_inv
 
     combined = np.arange(len(y))
-    interaction = cluster1.astype(str) + "_" + cluster2.astype(str)
+    interaction = np.array([str(a) + "_" + str(b) for a, b in zip(cluster1, cluster2)])
     V12 = XtX_inv @ cluster_meat(interaction) @ XtX_inv
 
     V = V1 + V2 - V12
