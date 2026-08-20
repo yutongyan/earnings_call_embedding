@@ -44,6 +44,10 @@ SNOWBALL_STOPWORDS = [
     "there","when","where","why","how","all","both","each","few","more","most",
     "other","some","such","no","nor","not","only","own","same","so","than",
     "too","very","s","t","can","will","just","don","should","now",
+    "d","ll","m","o","re","ve","y","ain",
+    "aren","couldn","didn","doesn","hadn","hasn","haven",
+    "isn","ma","mightn","mustn","needn","shan","shouldn",
+    "wasn","weren","won","wouldn",
 ]
 
 
@@ -75,22 +79,38 @@ def load_both_texts(event_ids, event_year_index):
     return pres, qa
 
 
-def assign_ff6_portfolio(permno_data, compustat_data, ccm_link):
-    """Assign each firm-year to one of 6 FF size/BM portfolios."""
+def assign_ff6_portfolio(june_me_df, compustat_data, ccm_link, msenames):
+    """Assign each firm-year to one of 6 FF size/BM portfolios.
+
+    Follows Fama-French methodology:
+    - Size breakpoint: NYSE median market cap (June)
+    - BM breakpoints: NYSE 30th/70th percentiles
+    - Book equity: most recent fiscal-year-end (Q4) Compustat ceqq
+    - Portfolio assignment in June of year t uses BE from fiscal year ending in t-1
+    - Events before July use prior year's assignment (no look-ahead)
+    """
     ccm = ccm_link.copy()
     ccm = ccm[ccm["linktype"].isin(["LU", "LC"]) & ccm["linkprim"].isin(["P", "C"])]
     ccm = ccm.rename(columns={"lpermno": "permno"})
+    ccm["linkdt"] = pd.to_datetime(ccm["linkdt"])
+    ccm["linkenddt"] = pd.to_datetime(ccm["linkenddt"])
+    ccm.loc[ccm["linkenddt"].isna(), "linkenddt"] = pd.Timestamp("2099-12-31")
 
-    june_me = permno_data[permno_data["month"] == 6][["permno", "year", "me"]].copy()
+    june_me = june_me_df.copy()
+
+    nyse_exchcd = msenames[msenames["exchcd"] == 1]["permno"].unique()
 
     comp = compustat_data.copy()
-    comp["year"] = comp["datadate"].dt.year
-    comp = comp.merge(ccm[["permno", "gvkey"]], on="gvkey", how="inner")
-    be = comp.groupby(["permno", "year"]).last()[["ceqq"]].reset_index()
-    be = be.rename(columns={"ceqq": "be"})
-    be["year"] = be["year"] + 1
+    comp = comp[comp["fqtr"] == 4].copy()
+    comp["be_year"] = comp["datadate"].dt.year
+    comp = comp.merge(ccm[["permno", "gvkey", "linkdt", "linkenddt"]], on="gvkey", how="inner")
+    comp["merge_date"] = pd.to_datetime(comp["datadate"])
+    comp = comp[(comp["merge_date"] >= comp["linkdt"]) & (comp["merge_date"] <= comp["linkenddt"])]
+    comp = comp.drop_duplicates(subset=["permno", "be_year"], keep="last")
+    be = comp[["permno", "be_year", "ceqq"]].rename(columns={"ceqq": "be"})
+    be["year"] = be["be_year"] + 1
 
-    merged = june_me.merge(be, on=["permno", "year"], how="left")
+    merged = june_me.merge(be[["permno", "year", "be"]], on=["permno", "year"], how="left")
     merged["bm"] = merged["be"] / merged["me"]
     merged = merged.dropna(subset=["me", "bm"])
     merged = merged[merged["bm"] > 0]
@@ -98,9 +118,13 @@ def assign_ff6_portfolio(permno_data, compustat_data, ccm_link):
     assignments = {}
     for year in merged["year"].unique():
         yr = merged[merged["year"] == year]
-        me_median = yr["me"].median()
-        bm_30 = yr["bm"].quantile(0.3)
-        bm_70 = yr["bm"].quantile(0.7)
+        nyse_yr = yr[yr["permno"].isin(nyse_exchcd)]
+        if len(nyse_yr) < 10:
+            nyse_yr = yr
+
+        me_median = nyse_yr["me"].median()
+        bm_30 = nyse_yr["bm"].quantile(0.3)
+        bm_70 = nyse_yr["bm"].quantile(0.7)
 
         for _, row in yr.iterrows():
             size = "sm" if row["me"] <= me_median else "bi"
@@ -156,10 +180,10 @@ def compute_ff6_benchmark_cars(merged_ar, crsp_chunks, ff6_portfolios, portfolio
                 if si >= len(dates_arr):
                     continue
 
-                call_year = ed.year
-                port_key = portfolio_assignments.get((int(permno), call_year))
+                assign_year = ed.year if ed.month >= 7 else ed.year - 1
+                port_key = portfolio_assignments.get((int(permno), assign_year))
                 if port_key is None:
-                    port_key = portfolio_assignments.get((int(permno), call_year - 1), "smme")
+                    port_key = portfolio_assignments.get((int(permno), assign_year - 1), "smme")
                 port_col = port_cols.get(port_key, "smme_vwret")
 
                 row = {"event_id": call["event_id"]}
@@ -169,8 +193,13 @@ def compute_ff6_benchmark_cars(merged_ar, crsp_chunks, ff6_portfolios, portfolio
                         row[f"car_{h}d"] = np.nan
                         continue
                     window = fc.iloc[si + 1:ei]
-                    daily_ar = window["ret"].values - window[port_col].values
-                    row[f"car_{h}d"] = float(np.nansum(daily_ar))
+                    firm_ret = window["ret"].values
+                    bench_ret = window[port_col].values
+                    valid = ~(np.isnan(firm_ret) | np.isnan(bench_ret))
+                    if valid.sum() < h * 0.5:
+                        row[f"car_{h}d"] = np.nan
+                        continue
+                    row[f"car_{h}d"] = float(np.sum(firm_ret[valid] - bench_ret[valid]))
 
                 all_cars.append(row)
 
@@ -267,8 +296,6 @@ def run_rolling_regression(meta, event_year_index):
         done_quarters = set(existing["yq"].unique())
         print(f"Resuming: {len(done_quarters)} quarters done ({len(results):,} results)")
 
-    prev_quintile_cutoffs = None
-
     for i, test_q in enumerate(test_quarters):
         if str(test_q) in done_quarters:
             continue
@@ -297,16 +324,12 @@ def run_rolling_regression(meta, event_year_index):
                 max_iter=500, random_state=42, tol=1e-3,
             )
             param_grid = {"alpha": [0.0001, 0.001, 0.01, 0.1]}
-            cv = GridSearchCV(base_model, param_grid, cv=3,
-                              scoring="neg_log_loss", n_jobs=-1, refit=False)
+            cv = GridSearchCV(base_model, param_grid, cv=5,
+                              scoring="neg_log_loss", n_jobs=-1, refit=True)
             cv.fit(X_train, y_train)
             best_alpha = cv.best_params_["alpha"]
 
-            best_base = SGDClassifier(
-                loss="log_loss", penalty="elasticnet", l1_ratio=0.5,
-                alpha=best_alpha, max_iter=500, random_state=42, tol=1e-3,
-            )
-            model = CalibratedClassifierCV(best_base, cv=3, method="sigmoid", n_jobs=-1)
+            model = CalibratedClassifierCV(cv.best_estimator_, cv=5, method="sigmoid", n_jobs=-1)
             model.fit(X_train, y_train)
         except Exception as e:
             print(f"  ERROR fitting: {e}", flush=True)
@@ -325,7 +348,6 @@ def run_rolling_regression(meta, event_year_index):
 
         sue_txt_train = compute_sue_txt(model, X_train)
         quintile_cutoffs = np.percentile(sue_txt_train, [20, 40, 60, 80])
-        prev_quintile_cutoffs = quintile_cutoffs
 
         for j, (idx, row) in enumerate(test_meta.iterrows()):
             q_assign = np.searchsorted(quintile_cutoffs, sue_txt_test[j]) + 1
@@ -435,7 +457,8 @@ def main():
 
     compustat = pd.read_parquet(
         f"{WRDS_DIR}/comp_fundq.parquet",
-        columns=["gvkey", "datadate", "ceqq", "indfmt", "datafmt", "popsrc", "consol"],
+        columns=["gvkey", "datadate", "fyearq", "fqtr", "ceqq",
+                  "indfmt", "datafmt", "popsrc", "consol"],
     )
     compustat = compustat[
         (compustat["indfmt"] == "INDL") & (compustat["datafmt"] == "STD")
@@ -443,10 +466,11 @@ def main():
     ]
     compustat["datadate"] = pd.to_datetime(compustat["datadate"])
     ccm = pd.read_parquet(f"{WRDS_DIR}/crsp_ccmxpf_linktable.parquet")
+    msenames = pd.read_parquet(f"{WRDS_DIR}/crsp_msenames.parquet")
 
-    port_assignments = assign_ff6_portfolio(june_me, compustat, ccm)
+    port_assignments = assign_ff6_portfolio(june_me, compustat, ccm, msenames)
     print(f"  Assigned {len(port_assignments):,} firm-years to portfolios")
-    del june_me, compustat, ccm
+    del june_me, compustat, ccm, msenames
     gc.collect()
 
     # FF6 benchmark CARs (summed, not compounded)
@@ -488,10 +512,19 @@ def main():
     df = results_df.dropna(subset=["car_63d", "sue_txt"]).copy()
     df["sue_txt_z"] = (df["sue_txt"] - df["sue_txt"].mean()) / df["sue_txt"].std()
 
-    df["car_63d_dm"] = df.groupby("permno")["car_63d"].transform(lambda x: x - x.mean())
-    df["car_63d_dm"] = df.groupby("yq")["car_63d_dm"].transform(lambda x: x - x.mean())
-    df["sue_dm"] = df.groupby("permno")["sue_txt_z"].transform(lambda x: x - x.mean())
-    df["sue_dm"] = df.groupby("yq")["sue_dm"].transform(lambda x: x - x.mean())
+    def iterative_demean(series, group1, group2, max_iter=100, tol=1e-8):
+        """Two-way FE absorption via alternating projection until convergence."""
+        s = series.copy()
+        for _ in range(max_iter):
+            prev = s.copy()
+            s = s - s.groupby(group1).transform("mean")
+            s = s - s.groupby(group2).transform("mean")
+            if (s - prev).abs().max() < tol:
+                break
+        return s
+
+    df["car_63d_dm"] = iterative_demean(df["car_63d"], df["permno"], df["yq"])
+    df["sue_dm"] = iterative_demean(df["sue_txt_z"], df["permno"], df["yq"])
 
     X = np.column_stack([np.ones(len(df)), df["sue_dm"].values])
     y = df["car_63d_dm"].values
