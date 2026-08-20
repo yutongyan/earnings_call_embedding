@@ -23,19 +23,18 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 PIT_MODELS = [
-    "201312", "201412", "201511", "201612",
-    "201712", "201812", "201912", "202012",
-    "202112", "202212", "202312", "202412",
+    "2013", "2014", "2015", "2016",
+    "2017", "2018", "2019", "2020",
+    "2021", "2022", "2023", "2024",
 ]
 
 
 def get_pit_model_for_date(call_date):
-    """Return the latest PIT model whose cutoff is strictly before call_date."""
-    call_ym = call_date.year * 100 + call_date.month
+    """Return the latest DatedGPT model whose year is strictly before call_date's year."""
+    call_year = call_date.year
     best = None
     for m in PIT_MODELS:
-        m_int = int(m)
-        if m_int < call_ym:
+        if int(m) < call_year:
             best = m
     return best
 
@@ -67,29 +66,6 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
     )
     model = model.to(device).eval()
 
-    captured_hidden = {}
-    def hook_fn(module, input, output):
-        if isinstance(output, tuple):
-            captured_hidden["last"] = output[0]
-        else:
-            captured_hidden["last"] = output
-
-    hook = None
-    last_block = None
-    for name, module in model.named_modules():
-        if "ln_f" in name or "final_layernorm" in name:
-            last_block = (name, module)
-            break
-    if last_block is None:
-        blocks = [(n, m) for n, m in model.named_modules() if re.match(r"transformer\.h\.\d+$", n)]
-        if blocks:
-            last_block = blocks[-1]
-    if last_block is not None:
-        hook = last_block[1].register_forward_hook(hook_fn)
-        print(f"    Hook on: {last_block[0]}", flush=True)
-    else:
-        print("    WARNING: no suitable layer found for hook, will use logits", flush=True)
-
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
@@ -99,24 +75,14 @@ def embed_texts(texts, model_name, batch_size=4, max_length=512, device="cuda"):
         ).to(device)
 
         with torch.no_grad():
-            captured_hidden.clear()
-            model(input_ids=encoded["input_ids"],
-                  attention_mask=encoded["attention_mask"])
-
-            if "last" in captured_hidden:
-                hidden = captured_hidden["last"]
-            else:
-                outputs = model(input_ids=encoded["input_ids"],
-                               attention_mask=encoded["attention_mask"])
-                hidden = outputs.logits
+            outputs = model(**encoded, output_hidden_states=True)
+            hidden = outputs.hidden_states[-1]
             embeddings = mean_pool(hidden, encoded["attention_mask"])
             all_embeddings.append(embeddings.float().cpu().numpy())
 
         if (i // batch_size) % 50 == 0:
             print(f"    Batch {i//batch_size+1}/{(len(texts)-1)//batch_size+1}", flush=True)
 
-    if hook is not None:
-        hook.remove()
     del model, tokenizer
     torch.cuda.empty_cache()
     gc.collect()
@@ -155,7 +121,7 @@ def embed_one_model(model_date, meta, output_dir, data_dir="data/",
         print(f"  {model_date}: already exists, skipping", flush=True)
         return
 
-    model_name = f"Diamegs/PIT-1B-FT-{model_date}"
+    model_name = f"datedgpt/datedgpt-{model_date}-base"
     print(f"  {model_date}: {len(model_meta):,} transcripts, model={model_name}", flush=True)
 
     event_ids = model_meta["event_id"].tolist()
