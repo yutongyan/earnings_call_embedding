@@ -131,7 +131,11 @@ Found 1,348 cases across all firms, 227 among CRSP-linked US firms. Categories:
 
 4. **Exact duplicate filings**: Same content filed under two event_ids.
 
-**Recommended handling:** For split filings, ideally concatenate the texts. For all other cases, keep the longest transcript per (permno, call_date), or the earliest event_id for point-in-time consistency. At 0.2% of the US sample, this has negligible impact on results.
+**Deduplication strategy:** Group by `(company_id, start_date)`. Within each group:
+1. Keep the record with the **earliest `lastUpdate`** (first uploaded version)
+2. Tie-break by **smallest `event_id`**
+
+This preserves point-in-time consistency: the first-uploaded transcript is what market participants had access to earliest. The `lastUpdate` field is unreliable for absolute timing (median 2-day lag from call date), but its relative ordering within the same call reliably identifies the first-uploaded version. At 0.2% of the US sample, choice of dedup strategy has negligible impact on results.
 
 ### 7.3 Multiple calls per (permno, quarter)
 
@@ -183,7 +187,7 @@ Starting from raw XML archive:
 | All XML files (2008-2019) | ~300K+ | All event types |
 | Filter to eventTypeId=1 | 224,476 | Earnings calls only |
 | Link to CRSP (US common stocks) | 110,986 | Ticker matching + date validation |
-| Dedup by (permno, call_date) | 110,759 | Keep earliest event_id |
+| Dedup by (company_id, start_date) | ~110,700 | Earliest lastUpdate, then smallest event_id |
 | Merge with abnormal returns | 109,925 | Require valid AR computation |
 | Drop outlier-length calls (>99.5th pctile) | 109,375 | Max ~2 hours / 14,776 words |
 | Test sample (2010Q1-2019Q4) | ~91,000 | After 8-quarter training window |
