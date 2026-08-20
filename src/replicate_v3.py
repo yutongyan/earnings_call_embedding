@@ -301,12 +301,12 @@ def process_one_quarter(args):
         )
         param_grid = {"alpha": [0.0001, 0.001, 0.01, 0.1]}
         cv_search = GridSearchCV(base_model, param_grid, cv=5,
-                          scoring="neg_log_loss", n_jobs=4, refit=True)
+                          scoring="neg_log_loss", n_jobs=1, refit=True)
         cv_search.fit(X_train, y_train)
         best_alpha = cv_search.best_params_["alpha"]
 
         model = CalibratedClassifierCV(cv_search.best_estimator_, cv=5,
-                                       method="sigmoid", n_jobs=4)
+                                       method="sigmoid", n_jobs=1)
         model.fit(X_train, y_train)
     except Exception as e:
         print(f"  {test_q} ERROR: {e}", flush=True)
@@ -372,7 +372,7 @@ def run_rolling_regression(meta, event_year_index):
 
     print(f"Quarters to process: {len(todo)}")
 
-    batch_size = 4
+    batch_size = 8
     for batch_start in range(0, len(todo), batch_size):
         batch = todo[batch_start:batch_start + batch_size]
         print(f"\nBatch {batch_start//batch_size+1}: quarters {[str(t[0]) for t in batch]}", flush=True)

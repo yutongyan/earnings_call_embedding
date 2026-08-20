@@ -121,7 +121,7 @@ def embed_one_model(model_date, meta, output_dir, data_dir="data/",
         print(f"  {model_date}: already exists, skipping", flush=True)
         return
 
-    model_name = f"Diamegs/PIT-4B-{model_date}"
+    model_name = f"Diamegs/PIT-1B-{model_date}"
     print(f"  {model_date}: {len(model_meta):,} transcripts, model={model_name}", flush=True)
 
     event_ids = model_meta["event_id"].tolist()
