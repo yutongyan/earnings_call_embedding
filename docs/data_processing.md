@@ -139,7 +139,23 @@ Some firms have multiple earnings calls in the same quarter (e.g., preliminary r
 - Link via CRSP-IBES identifier crosswalk
 - Use consensus forecast closest to but before the earnings announcement
 
-## 9. Sample Construction Summary
+## 9. Call Duration and Outlier Filtering
+
+The XML only contains `<startDate>` (no end time). Estimated call duration from transcript word count at ~150 words/min:
+
+| Percentile | Words | Est. Duration |
+|-----------|-------|---------------|
+| 25th | 5,529 | ~37 min |
+| 50th (median) | 7,471 | ~50 min |
+| 75th | 9,314 | ~62 min |
+| 99th | 13,800 | ~92 min |
+| 99.5th | 14,776 | ~99 min |
+
+Typical earnings calls last 45-90 minutes. We assume a maximum duration of **2 hours** and drop transcripts above the 99.5th percentile (>14,776 words), which removes 550 outliers that are likely data errors, combined multi-session events, or unusually long special calls.
+
+For the event-day return heuristic, the `<startDate>` hour is a sufficient proxy: a call starting before 4 PM ET will end before market close even at the 99th percentile duration.
+
+## 10. Sample Construction Summary
 
 Starting from raw XML archive:
 
@@ -150,8 +166,9 @@ Starting from raw XML archive:
 | Link to CRSP (US common stocks) | 110,986 | Ticker matching + date validation |
 | Dedup by (permno, call_date) | 110,759 | Keep earliest event_id |
 | Merge with abnormal returns | 109,925 | Require valid AR computation |
-| Test sample (2010Q1-2019Q4) | ~92,000 | After 8-quarter training window |
+| Drop outlier-length calls (>99.5th pctile) | 109,375 | Max ~2 hours / 14,776 words |
+| Test sample (2010Q1-2019Q4) | ~91,000 | After 8-quarter training window |
 
-## 10. Winsorization
+## 11. Winsorization
 
 Winsorize all continuous variables at the 1st and 99th percentiles, following standard practice in the PEAD literature.
