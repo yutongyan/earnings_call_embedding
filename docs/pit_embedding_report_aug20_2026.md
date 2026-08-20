@@ -4,11 +4,13 @@
 
 While building a point-in-time embedding pipeline for earnings call transcripts, we tested two model families: **PIT** (Diamegs) and **DatedGPT**. Both provide annual checkpoints trained on data up to a specific year, enabling look-ahead-free embeddings.
 
-We found that the PIT-1B base model produces embeddings with a structural quality issue that makes them unsuitable for direct use in financial applications. DatedGPT does not exhibit this issue. We document the finding below and suggest potential remedies.
+We found that the PIT-1B base model (December 2013 checkpoint) produces last-layer hidden states with a representation-scale issue that may require normalization before use in downstream financial applications. DatedGPT does not exhibit this issue to the same degree. We document the finding below and suggest next steps.
+
+**Limitation:** This comparison uses one checkpoint from each model family, 200 transcripts, and one extraction method (last-layer mean pooling, 512-token truncation). The two models use different tokenizers (32k SentencePiece vs 50k BPE), so the same 512-token limit covers different amounts of source text. Neither model is a dedicated sentence encoder. The decisive test is downstream predictive performance (e.g., predicting abnormal returns), not embedding statistics alone.
 
 ## Test Setup
 
-We embedded the **same 200 quarterly earnings call transcripts** (2014 Q1, US firms) using both models. Each transcript was truncated to 512 tokens and embedded via mean pooling over the last hidden layer.
+We embedded the **same 200 quarterly earnings call transcripts** (2014 Q1, US firms) using both models. Each transcript was truncated to 512 tokens and embedded via mean pooling over the last hidden layer. Statistics were computed in float32 after pooling.
 
 ## Results
 
@@ -17,66 +19,81 @@ We embedded the **same 200 quarterly earnings call transcripts** (2014 Q1, US fi
 | Hidden dimension | 2,048 | 1,536 |
 | Embedding mean | -0.008 | -0.079 |
 | Embedding std | 0.80 | 14.62 |
-| Max absolute value | 23.7 | **647.0** |
-| Dimensions with abs > 10 | 4 (0.2%) | **1,449 (94%)** |
-| L2 norm (mean) | 36.2 | **566.3** |
+| Max absolute value | 23.7 | 647.0 |
+| Dims with per-dim abs max > 10 | 4 (0.2%) | 1,449 (94%) |
+| L2 norm (mean) | 36.2 | 566.3 |
 
-### The issue: dominant outlier dimensions
+*Note: "Dims with per-dim abs max > 10" counts hidden dimensions whose maximum absolute value across all 200 documents exceeds 10.*
 
-In the PIT-1B base model, **two hidden dimensions carry extremely large, nearly constant values across all documents**:
+### The observation: high-magnitude dimensions in PIT
 
-- Dimension 1531: mean = 406.5, std = 76.0
-- Dimension 1352: mean = -217.4, std = 44.7
+In the PIT-1B base model, two hidden dimensions carry large values with relatively low cross-document variation:
 
-These dimensions account for a disproportionate share of the embedding vector's magnitude. Because their variance is low relative to their mean (std/mean ratio of ~0.19), they carry very little information about differences between transcripts. In effect, they act as large bias terms that overshadow the meaningful variation in other dimensions.
+| Dimension | Mean | Std | Std / |Mean| |
+|-----------|------|-----|---------------|
+| 1531 | 406.5 | 76.0 | 0.19 |
+| 1352 | -217.4 | 44.7 | 0.21 |
 
-### Why this matters for financial applications
+These dimensions account for a large share of the embedding vector's L2 norm. Their cross-document standard deviations (76 and 45) are not negligible in absolute terms, but are small relative to their means, suggesting that much of their magnitude is shared across documents rather than encoding document-specific information.
 
-When using embeddings as features (e.g., predicting abnormal returns, constructing text-based surprise measures), the outlier dimensions would:
+DatedGPT's largest dimension (mean = 20.1, std = 3.2) is 20x smaller in magnitude.
 
-1. **Dominate any distance or similarity metric** (cosine similarity, L2 distance), making all documents appear nearly identical
-2. **Overwhelm regression coefficients**, since a regularized model would allocate most weight to explaining the large-magnitude dimensions rather than the informative ones
-3. **Reduce the effective dimensionality** of the representation from 1,536 to a much smaller number
+### Potential implications for downstream use
 
-DatedGPT's embeddings do not have this problem. Its largest dimension (mean = 20.1) is 20x smaller than PIT's, and 99.8% of dimensions stay below an absolute value of 10.
+Without normalization, these high-magnitude dimensions could:
+
+1. **Distort distance and similarity metrics** (cosine similarity, L2 distance), since a large share of the vector's direction is determined by dimensions that vary relatively little across documents
+2. **Affect regression-based models**, depending on the scaling and regularization approach used
+3. **Concentrate scale** in a small number of dimensions, though a formal effective-dimensionality analysis (e.g., PCA participation ratio) would be needed to quantify this
+
+These are potential concerns, not confirmed effects. Whether they materially impact a specific downstream task (e.g., predicting post-earnings abnormal returns) depends on the task, the model specification, and any preprocessing applied.
 
 ## Possible Explanations
 
-This phenomenon has been documented in the transformer literature under terms like "massive activations" or "outlier features." Contributing factors may include:
+The transformer literature has documented similar high-magnitude activations in certain hidden dimensions (sometimes called "massive activations" or "outlier features"). Possible contributing factors include:
 
-- The depth of the network (PIT-1B has 52 layers vs DatedGPT's 24), which allows more accumulation through residual connections
-- Differences in initialization or normalization placement between the architectures
-- The language modeling objective does not directly constrain hidden-state magnitudes, since the LM head projection can compensate
+- Differences in network depth (PIT-1B has 52 layers, DatedGPT has 24), which may allow more accumulation through residual connections, though depth alone does not establish causality
+- Differences in initialization, normalization placement, or training dynamics between the two architectures
+- The language modeling objective does not directly constrain hidden-state magnitudes, since the LM head projection can in principle compensate (this remains speculative)
 
-We have not done a layer-by-layer analysis to pinpoint the exact cause, and this would be a worthwhile investigation for the PIT team.
+A rigorous analysis would require layer-by-layer activation measurements and controlled ablation studies.
 
-## Potential Remedies
+## Suggested Next Steps
 
-| Approach | Feasibility | Effectiveness |
-|----------|-------------|---------------|
-| **Per-dimension standardization** (zero mean, unit variance) | Easy, post-hoc | Good, but may amplify noise in low-variance dims |
-| **Use PIT-4B-FT** (fine-tuned variant) | Easy if available | Reportedly better, but needs verification |
-| **Intermediate-layer embeddings** (e.g., layer 26 instead of 51) | Easy to test | Outliers may be less severe in earlier layers |
-| **Architectural fix** (e.g., layer norm after last block, hidden-state regularization during training) | Requires retraining | Would resolve the root cause |
-| **Use DatedGPT instead** | Immediate | Avoids the issue entirely |
+| Approach | Notes |
+|----------|-------|
+| **Per-dimension standardization** | Zero mean, unit variance per dim. Fit on training sample only, apply identically to test. Does not by itself fix cosine similarity without subsequent L2 normalization. |
+| **PIT-4B-FT** (fine-tuned variant) | May have better-behaved hidden states. To be tested with the same diagnostic. |
+| **Intermediate-layer embeddings** | Extract from an earlier layer (e.g., layer 26) where the scale concentration may be less pronounced. Exploratory. |
+| **Remove or residualize outlier dimensions** | Drop or regress out dimensions with high mean-to-std ratio. Ad hoc, but useful as an exploratory diagnostic. |
+| **Architectural investigation** | Layer-by-layer analysis to identify where the scale concentration emerges. Could inform future model releases. |
+| **Downstream validation** | The most important test. Run both models' embeddings through the actual prediction task (e.g., PEAD regression) and compare out-of-sample performance. Embedding statistics are suggestive but not conclusive. |
 
-## Appendix: Raw Embedding Statistics
+## Appendix: Embedding Statistics
 
-### DatedGPT-2013-base, 10 random samples from 200 earnings calls
-
-```
-Sample [4216]: mean=-0.062, std=15.08, min=-226.7, max=439.1  <- PIT
-Sample [4216]: mean=-0.008, std=0.80,  min=-20.3,  max=23.7   <- DatedGPT (typical)
-```
-
-*The PIT sample's max (439) is 18x larger than DatedGPT's max (23.7), and both come from the same transcript.*
-
-### Top outlier dimensions in PIT-1B-201312 (200 earnings calls)
+### One example transcript, embedded by both models
 
 ```
-dim 1531: abs_max=647.0, mean=406.5, std=76.0  (std/mean = 0.19)
-dim 1352: abs_max=379.0, mean=-217.4, std=44.7  (std/mean = 0.21)
-dim 1081: abs_max=139.0, mean=21.9,  std=17.8  (std/mean = 0.81)
+PIT-1B-201312:   mean=-0.062, std=15.08, min=-226.7, max=439.1, abs_max_dim=1531
+DatedGPT-2013:   mean=-0.008, std=0.80,  min=-20.3,  max=23.7,  abs_max_dim=2030
 ```
 
-Dimensions 1531 and 1352 are nearly constant across documents (low std/mean ratio), confirming they carry minimal discriminative information.
+PIT's max (439) is 18x larger than DatedGPT's (24), driven by dimension 1531.
+
+### Top dimensions in PIT-1B-201312 (across 200 earnings calls)
+
+```
+dim 1531: abs_max=647.0, mean=406.5, std=76.0  (std/|mean| = 0.19)
+dim 1352: abs_max=379.0, mean=-217.4, std=44.7  (std/|mean| = 0.21)
+dim 1081: abs_max=139.0, mean=21.9,  std=17.8  (std/|mean| = 0.81)
+```
+
+### Top dimensions in DatedGPT-2013-base (across 200 earnings calls)
+
+```
+dim 2030: abs_max=23.7, mean=20.1, std=3.2  (std/|mean| = 0.16)
+dim 1073: abs_max=20.3, mean=-18.1, std=2.7  (std/|mean| = 0.15)
+dim 2006: abs_max=12.9, mean=-10.9, std=2.1  (std/|mean| = 0.19)
+```
+
+DatedGPT also has dimensions with low relative variation, but their absolute magnitudes are 20x smaller, so they do not dominate the overall embedding geometry to the same degree.
