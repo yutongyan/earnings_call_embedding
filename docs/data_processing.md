@@ -56,16 +56,18 @@ Use the `<startDate>` element (not `lastUpdate`, not the headline date). Format:
 
 Earnings calls typically last ~50 minutes (median), with 99th percentile at ~92 minutes. We assume a maximum call duration of 2 hours. The event-day return should capture the market's reaction to the call content.
 
-- `is_before_close`: whether the call **ends** before market close (4 PM ET)
-- Since we only have `<startDate>` (no end time), we estimate: `is_before_close = call_hour_et < 14` (call starts before 2 PM ET, so it ends before 4 PM ET with the 2-hour buffer)
-- Calls starting between 2-4 PM ET are ambiguous (may span close). Conservatively treat as after-close since the Q&A portion, which contains the most market-moving content, occurs in the second half of the call.
+- `is_before_close`: whether the call starts before noon ET
+- `is_before_close = call_hour_et < 12` (call starts before 12 PM ET)
+- Calls starting at noon or later are treated as after-close, since the call typically lasts ~50 minutes and the Q&A (most market-moving content) occurs in the second half.
 - If call time is unknown, set `is_before_close = None` (not False)
 
 This determines the event-day return window:
-- Before close (starts before 2 PM ET): use return from t-1 to t (market reacts same day)
-- After close (starts 2 PM ET or later): use return from t to t+1 (market reacts next day)
+- Before noon (starts before 12 PM ET): use return from t-1 to t (market reacts same day)
+- Noon or later (starts 12 PM ET or later): use return from t to t+1 (market reacts next day)
 
-Note: the original paper (Meursault et al. 2022) uses the Capital IQ transcript **upload timestamp** with a 3 PM ET cutoff. We use `<startDate>` (actual call time) from StreetEvents with a 2 PM ET cutoff to account for call duration. `lastUpdate` in StreetEvents is unreliable (median lag of 2 days from call date, reflecting file edits, not first upload).
+The 12 PM cutoff is conservative: a call starting at noon typically ends around 1 PM, well before close. Very few calls start between 12-4 PM ET (~5% of sample), so the exact cutoff has minimal impact. The two dominant groups are morning calls (~69%, before noon) and after-close calls (~24%, after 4 PM).
+
+Note: the original paper (Meursault et al. 2022) uses the Capital IQ transcript **upload timestamp** with a 3 PM ET cutoff. We use `<startDate>` (actual call time) from StreetEvents. `lastUpdate` in StreetEvents is unreliable (median lag of 2 days from call date, reflecting file edits, not first upload).
 
 ## 5. Text Extraction
 

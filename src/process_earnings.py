@@ -139,7 +139,7 @@ def parse_single_xml(filepath):
         if not sections["presentation"] and not sections["qa"]:
             return None
 
-        is_before_close = None if call_hour_et is None else (call_hour_et < 14)
+        is_before_close = None if call_hour_et is None else (call_hour_et < 12)
 
         return {
             "event_id": event_id,
