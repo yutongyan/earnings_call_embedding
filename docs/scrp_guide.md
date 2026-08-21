@@ -315,6 +315,25 @@ source ~/miniconda3/bin/activate llm
 python3 -u src/process_data.py
 ```
 
+## Job Management Best Practices
+
+- **Don't cancel running jobs** to restart with a fix. Let the job finish, then run the fix as a follow-up. Cancelled jobs lose all progress.
+- **Use checkpoints** in long-running scripts so progress survives restarts.
+- **Append follow-up work** as a new job that reads previous output, rather than re-running from scratch.
+- **Check job output** before canceling: `tail -10 ~/large-data/project/logs/job_ID.out`
+- **Use `squeue -u wenzhuoyue`** to see all running jobs before submitting new ones.
+
+## Project Location
+
+All project data and code lives on BeeGFS distributed storage:
+
+```
+~/large-data/earnings_call_embedding/     # code + processed data
+~/large-data/streetevent_transcripts/     # raw XML archives
+```
+
+Do NOT use `~/large/` (home filesystem, 50GB quota). Use `~/large-data/` (BeeGFS, 2TB quota).
+
 ## Contact
 
 SCRP High Performance Computing Cluster
