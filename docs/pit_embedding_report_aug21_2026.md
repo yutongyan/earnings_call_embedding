@@ -19,10 +19,10 @@ logits = self.lm_head(x)
 Standard HuggingFace models (GPT-2, LLaMA) implement this as a named module (`self.norm` or `self.ln_f`) and return post-norm hidden states via `output_hidden_states=True`. PIT's implementation does not expose this because:
 
 1. `F.rms_norm` is a bare function call with no learnable parameters, so it does not appear in `model.named_modules()` or `model.state_dict()`
-2. `output_hidden_states=True` is not implemented in the custom `PITForCausalLM` (returns `None`)
-3. The only way to discover the norm is to read the `forward()` source code
+2. `output_hidden_states=True` is not implemented in the custom `PITForCausalLM` (returns `None`, not pre-norm states)
+3. The norm can be discovered by reading the `forward()` source code, tracing execution, or comparing captured hidden states against logits
 
-This led us (and likely other researchers using hooks or `output_hidden_states`) to extract the pre-normalization hidden state, producing the large magnitude values.
+This led us to extract the pre-normalization residual stream when using forward hooks on the last transformer block. The pre-norm values are not incorrect model output; they are the residual stream before the model's final normalization step, which may be useful for other analyses but are not the intended representation for downstream tasks.
 
 ## Verification Across All Checkpoints
 
@@ -44,7 +44,9 @@ We tested the same 200 earnings call transcripts on all 11 PIT-1B checkpoints (2
 | 202312 | 0.89 | 27.8 | 5 | 35.4 |
 | 202412 | 0.89 | 24.2 | 5 | 35.1 |
 
-Stable across all checkpoints: std ~0.90, L2 norm ~35, at most 5 dimensions exceed abs 10. These are well-behaved embeddings suitable for downstream use.
+Stable across all checkpoints: std ~0.90, L2 norm ~35, at most 5 dimensions exceed abs 10. These values are numerically well-behaved. Downstream usefulness (e.g., predicting abnormal returns) requires task-specific validation.
+
+*Test setup: 200 earnings call transcripts (2014 Q1, first 2000 characters each, tokenized to max 512 tokens). Model inference in bfloat16, statistics computed in float32 after mean pooling.*
 
 ### Without `F.rms_norm` (incorrect extraction)
 
@@ -103,22 +105,33 @@ embedding = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
 
 ## Recommended Fix for the HuggingFace Repo
 
-The cleanest solution is a minimal change to `modeling_pit.py` on HuggingFace to support `output_hidden_states`:
+The cleanest solution is to add `output_hidden_states` support to `modeling_pit.py`. The conceptual change (to be adapted to the current file, which uses `CausalLMOutputWithPast` and supports caching):
 
-```diff
- def forward(self, input_ids=None, attention_mask=None, labels=None,
-+            output_hidden_states=None, **kwargs):
-+    if output_hidden_states is None:
-+        output_hidden_states = self.config.output_hidden_states
- 
-     x = self.transformer["wte"](input_ids)
-     for block in self.transformer["h"]:
-         x = block(x)
-     x = F.rms_norm(x, (x.size(-1),))
-+    hidden_states = (x,) if output_hidden_states else None
-     logits = self.lm_head(x)
--    return CausalLMOutput(logits=logits)
-+    return CausalLMOutput(logits=logits, hidden_states=hidden_states)
+```python
+# In forward(), add output_hidden_states parameter:
+def forward(self, ..., output_hidden_states=None, **kwargs):
+    if output_hidden_states is None:
+        output_hidden_states = self.config.output_hidden_states
+
+    all_hidden_states = [] if output_hidden_states else None
+
+    for block in self.transformer["h"]:
+        x = block(x, ...)
+        if output_hidden_states:
+            all_hidden_states.append(x)
+
+    x = F.rms_norm(x, (x.size(-1),))
+
+    if output_hidden_states:
+        all_hidden_states.append(x)  # post-norm state
+
+    # Preserve existing loss, past_key_values, logits_to_keep behavior
+    logits = self.lm_head(x)
+    return CausalLMOutputWithPast(
+        logits=logits,
+        hidden_states=tuple(all_hidden_states) if all_hidden_states else None,
+        ...  # existing fields unchanged
+    )
 ```
 
 With this change, embedding extraction works out of the box:
@@ -128,9 +141,7 @@ outputs = model(**inputs, output_hidden_states=True)
 embedding = outputs.hidden_states[-1]  # post-norm, 1536 dims, ready to use
 ```
 
-No hooks, no manual normalization. The `config.output_hidden_states` defaults to `False` so there is no memory overhead for standard text generation.
-
-Alternatively, adapting the model to a natively supported HuggingFace architecture (e.g., `LlamaForCausalLM`, which shares the same RoPE + RMSNorm design) would provide full ecosystem compatibility without any custom code.
+No hooks, no manual normalization. The `config.output_hidden_states` defaults to `False` so there is no memory overhead for standard text generation. When enabled, all intermediate layer states plus the final post-norm state are returned, following HuggingFace convention.
 
 ## Note on Previous Report
 
