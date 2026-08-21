@@ -28,7 +28,7 @@ This led us to extract the pre-normalization residual stream when using forward 
 
 We tested the same 200 earnings call transcripts on all 11 PIT-1B checkpoints (2014-2024), extracting hidden states both with and without `F.rms_norm` applied after the last transformer block.
 
-### With `F.rms_norm` applied (correct extraction)
+### With `F.rms_norm` applied (post-normalization extraction)
 
 | Checkpoint | Std | Max | Dims > 10 | L2 Norm |
 |-----------|-----|-----|-----------|---------|
@@ -48,7 +48,7 @@ Stable across all checkpoints: std ~0.90, L2 norm ~35, at most 5 dimensions exce
 
 *Test setup: 200 earnings call transcripts (2014 Q1, first 2000 characters each, tokenized to max 512 tokens). Model inference in bfloat16, statistics computed in float32 after mean pooling.*
 
-### Without `F.rms_norm` (incorrect extraction)
+### Without `F.rms_norm` (pre-normalization residual stream)
 
 | Checkpoint | Std | Max | Dims > 10 | L2 Norm | Top Dim Mean |
 |-----------|-----|-----|-----------|---------|-------------|
@@ -77,7 +77,7 @@ The modded-nanogpt architecture (which PIT is based on) was designed for trainin
 | Hook on final norm | Works (`model.norm`) | Impossible (no module to hook) |
 | `model.named_modules()` | Includes `norm` | Does not include any final norm |
 
-Any researcher using standard extraction methods (hooks on the last block, `output_hidden_states`, or calling the backbone directly) will get pre-normalization hidden states and observe the large magnitude values.
+Researchers using forward hooks on the last transformer block will capture the pre-normalization residual stream and observe the large magnitude values. The `output_hidden_states=True` parameter returns `None` in the current implementation (not pre-norm states), so it fails silently rather than returning incorrect values.
 
 ## Correct Extraction Method
 
@@ -141,7 +141,7 @@ outputs = model(**inputs, output_hidden_states=True)
 embedding = outputs.hidden_states[-1]  # post-norm, 1536 dims, ready to use
 ```
 
-No hooks, no manual normalization. The `config.output_hidden_states` defaults to `False` so there is no memory overhead for standard text generation. When enabled, all intermediate layer states plus the final post-norm state are returned, following HuggingFace convention.
+No hooks, no manual normalization. The `config.output_hidden_states` defaults to `False` so there is no memory overhead for standard text generation. When enabled, intermediate layer states and the final post-norm state are returned. Whether to also include the initial embedding state should be decided explicitly.
 
 ## Note on Previous Report
 
