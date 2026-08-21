@@ -85,17 +85,17 @@ Researchers using forward hooks on the last transformer block will capture the p
 
 ## PIT-4B Verification
 
-The same pattern holds for the 4B model (4096 hidden dims, 20 layers). Tested on 50 transcripts with PIT-4B-201312:
+The same pattern holds for the 4B model (4096 hidden dims, 20 layers). Tested on the same 200 transcripts with PIT-4B-201312:
 
 | | WITH rms_norm | WITHOUT rms_norm |
 |--|--------------|-----------------|
-| Shape | (50, 4096) | (50, 4096) |
-| Std | 0.84 | 47.8 |
-| Max | 17.9 | 1,298 |
-| Dims > 10 | 3 | 4,087 (99.8%) |
-| L2 Norm | 54.0 | 3,030 |
+| Shape | (200, 4096) | (200, 4096) |
+| Std | 0.84 | 48.5 |
+| Max | 17.9 | 1,361 |
+| Dims > 10 | 3 | 4,096 (100%) |
+| L2 Norm | 54.0 | 3,072 |
 
-The 4B model's pre-norm magnitudes are smaller than 1B's (max 1,298 vs 13,687) because 4B has 20 layers versus 1B's 52 layers. Fewer layers means less accumulation in the residual stream. The fix (applying `F.rms_norm`) works identically across both model sizes.
+The 4B model's pre-norm magnitudes are smaller than 1B's (max 1,298 vs 13,687), consistent with reduced residual accumulation from 20 layers versus 52. The 4B's post-norm L2 norm (54.0) is naturally larger than 1B's (~36) due to the wider hidden dimension (4096 vs 1536), not a normalization issue. The same extraction correction (applying `F.rms_norm`) works for both model sizes.
 
 ## Correct Extraction Method
 
