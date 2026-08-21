@@ -83,6 +83,20 @@ The modded-nanogpt architecture (which PIT is based on) was designed for trainin
 
 Researchers using forward hooks on the last transformer block will capture the pre-normalization residual stream and observe the large magnitude values. The `output_hidden_states=True` parameter returns `None` in the current implementation (not pre-norm states), so it fails silently rather than returning incorrect values.
 
+## PIT-4B Verification
+
+The same pattern holds for the 4B model (4096 hidden dims, 20 layers). Tested on 50 transcripts with PIT-4B-201312:
+
+| | WITH rms_norm | WITHOUT rms_norm |
+|--|--------------|-----------------|
+| Shape | (50, 4096) | (50, 4096) |
+| Std | 0.84 | 47.8 |
+| Max | 17.9 | 1,298 |
+| Dims > 10 | 3 | 4,087 (99.8%) |
+| L2 Norm | 54.0 | 3,030 |
+
+The 4B model's pre-norm magnitudes are smaller than 1B's (max 1,298 vs 13,687) because 4B has 20 layers versus 1B's 52 layers. Fewer layers means less accumulation in the residual stream. The fix (applying `F.rms_norm`) works identically across both model sizes.
+
 ## Correct Extraction Method
 
 ```python
