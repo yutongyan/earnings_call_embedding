@@ -26,6 +26,8 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
+os.environ["WRDS_USERNAME"] = os.environ.get("WRDS_USERNAME", "yutongyancuhk")
+
 import numpy as np
 import pandas as pd
 import wrds
