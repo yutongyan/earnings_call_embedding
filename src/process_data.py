@@ -26,11 +26,14 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
-os.environ["WRDS_USERNAME"] = os.environ.get("WRDS_USERNAME", "yutongyancuhk")
-
 import numpy as np
 import pandas as pd
 import wrds
+
+
+def get_wrds_connection(wrds_user="yutongyancuhk"):
+    """Connect to WRDS. Uses ~/.pgpass and ~/.wrdsrc for credentials."""
+    return wrds.Connection(wrds_username=wrds_user)
 
 TZ_UTC = ZoneInfo("UTC")
 TZ_NYC = ZoneInfo("America/New_York")
@@ -277,7 +280,7 @@ def link_to_crsp(data_dir, wrds_user):
     transcripts = transcripts.dropna(subset=["call_date"])
     print(f"  Transcripts: {len(transcripts):,}")
 
-    db = wrds.Connection(wrds_username=wrds_user)
+    db = get_wrds_connection(wrds_user)
 
     msenames = db.raw_sql("""
         SELECT permno, namedt, nameendt, ncusip, ticker, shrcd, exchcd
@@ -369,7 +372,7 @@ def compute_abnormal_returns(linked, data_dir, wrds_user):
     """Compute one-day AR using FF3+momentum with timing heuristic."""
     print("\n=== Step 4: Computing abnormal returns ===", flush=True)
 
-    db = wrds.Connection(wrds_username=wrds_user)
+    db = get_wrds_connection(wrds_user)
 
     permnos = linked["permno"].unique().tolist()
     print(f"  {len(permnos):,} unique permnos")
@@ -485,7 +488,7 @@ def compute_cars(merged_ar, data_dir, wrds_user):
     assignments = pd.read_parquet(os.path.join(data_dir, "ff6_assignments.parquet"))
     port_map = {(int(r["permno"]), int(r["year"])): r["portfolio"] for _, r in assignments.iterrows()}
 
-    db = wrds.Connection(wrds_username=wrds_user)
+    db = get_wrds_connection(wrds_user)
     horizons = [32, 63, 126, 189, 252]
     all_cars = []
 
