@@ -101,15 +101,4 @@ mask = attention_mask.unsqueeze(-1).float()
 embedding = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
 ```
 
-## Comparison with DatedGPT
-
-With the correct extraction (including `F.rms_norm`), PIT-1B produces embeddings comparable to DatedGPT:
-
-| Metric | PIT-1B (with norm) | DatedGPT |
-|--------|-------------------|----------|
-| Std | 0.90 | 0.80 |
-| Max | ~36 | ~24 |
-| L2 Norm | ~36 | ~36 |
-| Dims > 10 | 1-5 | 4 |
-
 The previous report (Aug 20) incorrectly identified an architectural issue. The model is architecturally sound. The issue was entirely in the extraction method.
