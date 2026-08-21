@@ -67,22 +67,10 @@ for (i in seq_along(quarters)) {
         # Predict log-odds (type="link") on test set
         preds <- predict(fit, newx = X_test, s = "lambda.min", type = "link")
 
-        # For multinomial glmnet, predict(type="link") returns either:
-        # - A list of matrices (one per class), or
-        # - A 3D array [n_test, n_lambda, n_class]
-        # Handle both formats
-        if (is.list(preds)) {
-            link_H <- as.numeric(preds[["H"]])
-            link_L <- as.numeric(preds[["L"]])
-        } else if (is.array(preds) && length(dim(preds)) == 3) {
-            link_H <- preds[, 1, "H"]
-            link_L <- preds[, 1, "L"]
-        } else {
-            # Matrix format: columns are classes
-            cn <- colnames(preds)
-            link_H <- preds[, which(cn == "H")]
-            link_L <- preds[, which(cn == "L")]
-        }
+        # predict(type="link") returns 3D array: [n_test, n_class, n_lambda]
+        # dim = [2362, 3, 1], dimnames = [NULL, c("H","F","L"), "lambda.min"]
+        link_H <- preds[, "H", 1]
+        link_L <- preds[, "L", 1]
 
         # SUE.txt = log-odds(H) - log-odds(L)
         sue_txt <- link_H - link_L
