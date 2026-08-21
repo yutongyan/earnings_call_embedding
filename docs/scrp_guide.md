@@ -249,6 +249,14 @@ python3 -c "import wrds; db = wrds.Connection(wrds_username='yutongyancuhk'); pr
 
 No Duo push needed for database queries once `.pgpass` is configured.
 
+**Batch job workaround**: The `wrds` Python library may prompt for username interactively even with `.wrdsrc` configured. In Slurm batch jobs, pipe the username to prevent the prompt from hanging:
+
+```bash
+echo 'yutongyancuhk' | python3 -u src/my_script.py
+```
+
+**Important**: Do not trigger WRDS Duo push authentication without explicit permission. The `.pgpass` credential file handles PostgreSQL authentication directly. Duo push is only needed for WRDS web/SSH login, not for database connections via the `wrds` Python library.
+
 ### Environment setup (first time)
 
 ```bash
