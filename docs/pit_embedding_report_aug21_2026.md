@@ -2,7 +2,7 @@
 
 ## Summary
 
-While extracting embeddings from PIT-1B for earnings call transcripts, we observed extremely large values in certain hidden dimensions (dim 1531 reaching magnitudes of 10,000+). After investigation, we found this is **not a model deficiency** but an **extraction error**: the model applies `F.rms_norm` to the hidden state before the LM head, and we were extracting the hidden state before this normalization step. Applying `F.rms_norm` to the extracted hidden states produces well-behaved embeddings across all 11 checkpoints (2014-2024).
+While extracting embeddings from PIT-1B for earnings call transcripts, we observed extremely large values in certain hidden dimensions (dim 1531 reaching magnitudes of 10,000+). After investigation, we found this is **not a model deficiency** but a result of **extracting the pre-normalization residual stream**: the model applies `F.rms_norm` to the hidden state before the LM head, and we were extracting the hidden state before this normalization step. Applying `F.rms_norm` to the extracted hidden states produces well-behaved embeddings across all 11 checkpoints (2014-2024).
 
 ## Why This Happens
 
@@ -95,7 +95,7 @@ The same pattern holds for the 4B model (4096 hidden dims, 20 layers). Tested on
 | Dims > 10 | 3 | 4,096 (100%) |
 | L2 Norm | 54.0 | 3,072 |
 
-The 4B model's pre-norm magnitudes are smaller than 1B's (max 1,298 vs 13,687), consistent with reduced residual accumulation from 20 layers versus 52. The 4B's post-norm L2 norm (54.0) is naturally larger than 1B's (~36) due to the wider hidden dimension (4096 vs 1536), not a normalization issue. The same extraction correction (applying `F.rms_norm`) works for both model sizes.
+The 4B model's pre-norm magnitudes are smaller than 1B's (max 1,361 vs 13,687), consistent with reduced residual accumulation from 20 layers versus 52. The 4B's post-norm L2 norm (54.0) is naturally larger than 1B's (~36) due to the wider hidden dimension (4096 vs 1536), not a normalization issue. The same extraction correction (applying `F.rms_norm`) works for both model sizes.
 
 ## Correct Extraction Method
 
@@ -163,4 +163,4 @@ No hooks, no manual normalization. The `config.output_hidden_states` defaults to
 
 ## Note on Previous Report
 
-The previous report (Aug 20) incorrectly identified an architectural issue. The model is architecturally sound. The issue was entirely in the extraction method.
+The previous report (Aug 20) incorrectly identified an architectural issue. The underlying model computation is sound; the extraction path did not expose the post-normalization state.
