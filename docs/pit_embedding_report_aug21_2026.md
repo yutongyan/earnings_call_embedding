@@ -4,6 +4,10 @@
 
 While extracting embeddings from PIT-1B for earnings call transcripts, we observed extremely large values in certain hidden dimensions (dim 1531 reaching magnitudes of 10,000+). After investigation, we found this is **not a model deficiency** but an **extraction error**: the model applies `F.rms_norm` to the hidden state before the LM head, and we were extracting the hidden state before this normalization step. Applying `F.rms_norm` to the extracted hidden states produces well-behaved embeddings across all 11 checkpoints (2014-2024).
 
+## Why This Happens
+
+Hugging Face has built-in support for standard models like Llama-3, meaning it knows exactly where every piece is and how to handle it. When someone builds a custom model and uploads it to Hugging Face, they have to write their own instructions for how the model works internally, and if those instructions don't expose every step the same way the standard models do, then tools that work automatically with Llama-3 will silently skip steps or return nothing when used on the custom model.
+
 ## Root Cause
 
 PIT is based on the modded-nanogpt architecture, which applies the final normalization as a bare functional call rather than a named module:
