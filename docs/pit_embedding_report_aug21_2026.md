@@ -101,4 +101,37 @@ mask = attention_mask.unsqueeze(-1).float()
 embedding = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
 ```
 
+## Recommended Fix for the HuggingFace Repo
+
+The cleanest solution is a minimal change to `modeling_pit.py` on HuggingFace to support `output_hidden_states`:
+
+```diff
+ def forward(self, input_ids=None, attention_mask=None, labels=None,
++            output_hidden_states=None, **kwargs):
++    if output_hidden_states is None:
++        output_hidden_states = self.config.output_hidden_states
+ 
+     x = self.transformer["wte"](input_ids)
+     for block in self.transformer["h"]:
+         x = block(x)
+     x = F.rms_norm(x, (x.size(-1),))
++    hidden_states = (x,) if output_hidden_states else None
+     logits = self.lm_head(x)
+-    return CausalLMOutput(logits=logits)
++    return CausalLMOutput(logits=logits, hidden_states=hidden_states)
+```
+
+With this change, embedding extraction works out of the box:
+
+```python
+outputs = model(**inputs, output_hidden_states=True)
+embedding = outputs.hidden_states[-1]  # post-norm, 1536 dims, ready to use
+```
+
+No hooks, no manual normalization. The `config.output_hidden_states` defaults to `False` so there is no memory overhead for standard text generation.
+
+Alternatively, adapting the model to a natively supported HuggingFace architecture (e.g., `LlamaForCausalLM`, which shares the same RoPE + RMSNorm design) would provide full ecosystem compatibility without any custom code.
+
+## Note on Previous Report
+
 The previous report (Aug 20) incorrectly identified an architectural issue. The model is architecturally sound. The issue was entirely in the extraction method.
