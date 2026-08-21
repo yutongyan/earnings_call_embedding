@@ -28,7 +28,27 @@ CRSP_SENTINELS = {-66.0, -77.0, -88.0, -99.0}
 
 
 def get_wrds_connection(wrds_user):
-    return wrds.Connection(wrds_username=wrds_user)
+    """Connect to WRDS, reading password from ~/.pgpass if needed."""
+    pgpass = os.path.expanduser("~/.pgpass")
+    password = ""
+    if os.path.exists(pgpass):
+        with open(pgpass) as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) >= 5 and "wrds" in parts[0]:
+                    password = ":".join(parts[4:])
+                    break
+    conn = wrds.Connection.__new__(wrds.Connection)
+    conn._hostname = "wrds-pgdata.wharton.upenn.edu"
+    conn._port = 9737
+    conn._dbname = "wrds"
+    conn._username = wrds_user
+    conn._password = password
+    conn._verbose = False
+    conn._connect_args = {}
+    conn.engine = None
+    conn._Connection__make_sa_engine_conn(raise_err=True)
+    return conn
 
 
 def winsorize(s, lower=0.01, upper=0.99):
